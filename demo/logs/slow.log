@@ -1,0 +1,115 @@
+/usr/sbin/mysqld, Version: 8.0.46 (MySQL Community Server - GPL). started with:
+Tcp port: 3306  Unix socket: /var/run/mysqld/mysqld.sock
+Time                 Id Command    Argument
+# Time: 2026-10-21T03:52:13.559313Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   176
+# Query_time: 0.394738  Lock_time: 0.000004 Rows_sent: 20  Rows_examined: 1900020 Thread_id: 176 Errno: 0 Killed: 0 Bytes_received: 119 Bytes_sent: 1476 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 9 Sort_range_count: 0 Sort_rows: 900020 Sort_scan_count: 1 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:13.164575Z End: 2026-10-21T03:52:13.559313Z
+use shopdb;
+SET timestamp=1792554733;
+SELECT id, order_no, customer_id, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT 900000, 20;
+# Time: 2026-10-21T03:52:13.909206Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   177
+# Query_time: 0.331466  Lock_time: 0.000002 Rows_sent: 20  Rows_examined: 1900020 Thread_id: 177 Errno: 0 Killed: 0 Bytes_received: 119 Bytes_sent: 1476 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 9 Sort_range_count: 0 Sort_rows: 900020 Sort_scan_count: 1 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:13.577740Z End: 2026-10-21T03:52:13.909206Z
+SET timestamp=1792554733;
+SELECT id, order_no, customer_id, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT 900000, 20;
+# Time: 2026-10-21T03:52:14.251877Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   178
+# Query_time: 0.327794  Lock_time: 0.000003 Rows_sent: 20  Rows_examined: 1900020 Thread_id: 178 Errno: 0 Killed: 0 Bytes_received: 119 Bytes_sent: 1476 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 9 Sort_range_count: 0 Sort_rows: 900020 Sort_scan_count: 1 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:13.924083Z End: 2026-10-21T03:52:14.251877Z
+SET timestamp=1792554733;
+SELECT id, order_no, customer_id, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT 900000, 20;
+# Time: 2026-10-21T03:52:14.732272Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   181
+# Query_time: 0.432606  Lock_time: 0.000001 Rows_sent: 1  Rows_examined: 1900020 Thread_id: 181 Errno: 0 Killed: 0 Bytes_received: 135 Bytes_sent: 401 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 9 Sort_range_count: 0 Sort_rows: 900020 Sort_scan_count: 1 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:14.299666Z End: 2026-10-21T03:52:14.732272Z
+SET timestamp=1792554734;
+EXPLAIN ANALYZE SELECT id, order_no, customer_id, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT 900000, 20;
+# Time: 2026-10-21T03:52:15.145253Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   183
+# Query_time: 0.375986  Lock_time: 0.000002 Rows_sent: 1  Rows_examined: 2000000 Thread_id: 183 Errno: 0 Killed: 0 Bytes_received: 88 Bytes_sent: 92 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 2000001 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:14.769267Z End: 2026-10-21T03:52:15.145253Z
+SET timestamp=1792554734;
+SELECT COUNT(*) AS cnt, SUM(amount) AS amt FROM order_items WHERE sku='SKU001234';
+# Time: 2026-10-21T03:52:15.489817Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   184
+# Query_time: 0.328184  Lock_time: 0.000003 Rows_sent: 1  Rows_examined: 2000000 Thread_id: 184 Errno: 0 Killed: 0 Bytes_received: 88 Bytes_sent: 92 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 2000001 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:15.161633Z End: 2026-10-21T03:52:15.489817Z
+SET timestamp=1792554735;
+SELECT COUNT(*) AS cnt, SUM(amount) AS amt FROM order_items WHERE sku='SKU001234';
+# Time: 2026-10-21T03:52:15.841936Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   185
+# Query_time: 0.332865  Lock_time: 0.000002 Rows_sent: 1  Rows_examined: 2000000 Thread_id: 185 Errno: 0 Killed: 0 Bytes_received: 88 Bytes_sent: 92 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 2000001 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:15.509071Z End: 2026-10-21T03:52:15.841936Z
+SET timestamp=1792554735;
+SELECT COUNT(*) AS cnt, SUM(amount) AS amt FROM order_items WHERE sku='SKU001234';
+# Time: 2026-10-21T03:52:16.221132Z
+# User@Host: root[root] @  [192.168.215.1]  Id:   188
+# Query_time: 0.328085  Lock_time: 0.000002 Rows_sent: 1  Rows_examined: 2000000 Thread_id: 188 Errno: 0 Killed: 0 Bytes_received: 88 Bytes_sent: 92 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 2000001 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:15.893047Z End: 2026-10-21T03:52:16.221132Z
+SET timestamp=1792554735;
+SELECT COUNT(*) AS cnt, SUM(amount) AS amt FROM order_items WHERE sku='SKU001234';
+# Time: 2026-10-21T03:52:16.893413Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   196
+# Query_time: 0.250968  Lock_time: 0.000005 Rows_sent: 1  Rows_examined: 1000000 Thread_id: 196 Errno: 0 Killed: 0 Bytes_received: 86 Bytes_sent: 222 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:16.642445Z End: 2026-10-21T03:52:16.893413Z
+SET timestamp=1792554736;
+SELECT id, order_no, total_amount FROM orders WHERE order_no LIKE '%0000012345';
+# Time: 2026-10-21T03:52:17.152132Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   197
+# Query_time: 0.239554  Lock_time: 0.000002 Rows_sent: 1  Rows_examined: 1000000 Thread_id: 197 Errno: 0 Killed: 0 Bytes_received: 86 Bytes_sent: 222 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:16.912578Z End: 2026-10-21T03:52:17.152132Z
+SET timestamp=1792554736;
+SELECT id, order_no, total_amount FROM orders WHERE order_no LIKE '%0000012345';
+# Time: 2026-10-21T03:52:17.410450Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   198
+# Query_time: 0.239539  Lock_time: 0.000002 Rows_sent: 1  Rows_examined: 1000000 Thread_id: 198 Errno: 0 Killed: 0 Bytes_received: 86 Bytes_sent: 222 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:17.170911Z End: 2026-10-21T03:52:17.410450Z
+SET timestamp=1792554737;
+SELECT id, order_no, total_amount FROM orders WHERE order_no LIKE '%0000012345';
+# Time: 2026-10-21T03:52:17.701562Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   202
+# Query_time: 0.223858  Lock_time: 0.000003 Rows_sent: 10  Rows_examined: 111122 Thread_id: 202 Errno: 0 Killed: 0 Bytes_received: 232 Bytes_sent: 394 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-21T03:52:17.477704Z End: 2026-10-21T03:52:17.701562Z
+SET timestamp=1792554737;
+SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+# Time: 2026-10-21T03:52:18.524430Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   203
+# Query_time: 0.804845  Lock_time: 0.000003 Rows_sent: 10  Rows_examined: 111122 Thread_id: 203 Errno: 0 Killed: 0 Bytes_received: 232 Bytes_sent: 394 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-21T03:52:17.719585Z End: 2026-10-21T03:52:18.524430Z
+SET timestamp=1792554737;
+SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+# Time: 2026-10-21T03:52:18.749101Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   204
+# Query_time: 0.205825  Lock_time: 0.000002 Rows_sent: 10  Rows_examined: 111122 Thread_id: 204 Errno: 0 Killed: 0 Bytes_received: 232 Bytes_sent: 394 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-21T03:52:18.543276Z End: 2026-10-21T03:52:18.749101Z
+SET timestamp=1792554738;
+SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+# Time: 2026-10-21T03:52:19.028330Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   207
+# Query_time: 0.228213  Lock_time: 0.000002 Rows_sent: 1  Rows_examined: 111122 Thread_id: 207 Errno: 0 Killed: 0 Bytes_received: 248 Bytes_sent: 852 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-21T03:52:18.800117Z End: 2026-10-21T03:52:19.028330Z
+SET timestamp=1792554738;
+EXPLAIN ANALYZE SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+# Time: 2026-10-21T03:52:25.792311Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   215
+# Query_time: 6.612709  Lock_time: 0.000011 Rows_sent: 0  Rows_examined: 0 Thread_id: 215 Errno: 0 Killed: 0 Bytes_received: 84 Bytes_sent: 50 Read_first: 0 Read_last: 0 Read_key: 51 Read_next: 63 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 0 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:19.179602Z End: 2026-10-21T03:52:25.792311Z
+SET timestamp=1792554739;
+ALTER TABLE order_items ADD INDEX idx_sku (sku), ALGORITHM=INPLACE, LOCK=NONE;
+# Time: 2026-10-21T03:52:29.340751Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   228
+# Query_time: 3.344744  Lock_time: 0.000019 Rows_sent: 0  Rows_examined: 0 Thread_id: 228 Errno: 0 Killed: 0 Bytes_received: 127 Bytes_sent: 50 Read_first: 0 Read_last: 0 Read_key: 67 Read_next: 101 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 0 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-21T03:52:25.996007Z End: 2026-10-21T03:52:29.340751Z
+SET timestamp=1792554745;
+ALTER TABLE orders ADD INDEX idx_created_cust_amount (created_at, customer_id, pay_amount), ALGORITHM=INPLACE, LOCK=NONE;
+/usr/sbin/mysqld, Version: 8.0.46 (MySQL Community Server - GPL). started with:
+Tcp port: 3306  Unix socket: /var/run/mysqld/mysqld.sock
+Time                 Id Command    Argument
+# Time: 2026-10-23T13:51:08.049437Z
+# User@Host: root[root] @  [192.168.215.1]  Id:     9
+# Query_time: 0.967902  Lock_time: 0.000045 Rows_sent: 1  Rows_examined: 1 Thread_id: 9 Errno: 0 Killed: 0 Bytes_received: 250 Bytes_sent: 212 Read_first: 5 Read_last: 0 Read_key: 162 Read_next: 4050173 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 0 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 0 Sort_scan_count: 0 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-23T13:51:07.081535Z End: 2026-10-23T13:51:08.049437Z
+SET timestamp=1792763467;
+SELECT (SELECT COUNT(*) FROM shopdb.orders) orders, (SELECT COUNT(*) FROM shopdb.order_items) items, (SELECT COUNT(*) FROM shopdb.payments) pays, (SELECT COUNT(*) FROM shopdb.customers) cust, (SELECT COUNT(*) FROM shopdb.inventory_log) inv_log;
+# Time: 2026-10-23T13:51:15.874053Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:    11
+# Query_time: 0.824646  Lock_time: 0.000003 Rows_sent: 1  Rows_examined: 1900020 Thread_id: 11 Errno: 0 Killed: 0 Bytes_received: 135 Bytes_sent: 400 Read_first: 1 Read_last: 0 Read_key: 1 Read_next: 0 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 1000001 Sort_merge_passes: 9 Sort_range_count: 0 Sort_rows: 900020 Sort_scan_count: 1 Created_tmp_disk_tables: 0 Created_tmp_tables: 0 Start: 2026-10-23T13:51:15.049407Z End: 2026-10-23T13:51:15.874053Z
+use shopdb;
+SET timestamp=1792763475;
+EXPLAIN ANALYZE SELECT id, order_no, customer_id, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT 900000, 20;
