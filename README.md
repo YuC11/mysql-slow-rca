@@ -7,6 +7,8 @@
 ```bash
 # 1. 拉起演示库（Docker，2核1G，MySQL 8.0）
 bash demo/scripts/00-up.sh
+#   自定义容器资源规格（默认 2核/1G；容器已存在时自动 docker update 热改，无需重建）：
+#   CPUS=1 MEM=2g bash demo/scripts/00-up.sh
 #   追加自定义 mysqld 参数（命令行级，优先级高于 conf/my.cnf；改参数需 RESET=1 重建）：
 #   MYSQL_ARGS="--max_connections=100 --innodb_buffer_pool_size=256M" bash demo/scripts/00-up.sh
 

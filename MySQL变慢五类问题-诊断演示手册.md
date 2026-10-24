@@ -63,6 +63,10 @@ slow_query_log=ON, log_slow_extra=ON
 gtid_mode=ON, binlog_format=ROW
 ```
 
+> 容器资源（CPU/内存）可用环境变量覆盖：`CPUS=1 MEM=2g bash demo/scripts/00-up.sh`。
+> 容器已存在时脚本自动 `docker update` 热改限制，无需重建、数据不受影响——
+> 方便对照演示"升配后 CPU 瓶颈消失"（案例四）。mysqld 级参数用 `MYSQL_ARGS` 追加（仅创建时生效）。
+
 ### 1.2 企业级示例库
 
 不是 `t1/t2` 玩具表，而是电商交易的真实结构（`demo/sql/01-schema.sql`）：
