@@ -5,6 +5,7 @@
 #   RESET=1 bash demo/scripts/00-up.sh  # 删库重来
 set -eu
 cd "$(dirname "$0")/../.."
+source demo/scripts/lib.sh
 
 NAME=mysql-demo
 VOL=mysql-demo-data
@@ -44,7 +45,7 @@ for i in $(seq 1 80); do
   sleep 2
 done
 
-M="mysql --defaults-extra-file=demo/scripts/.my-root.cnf -h127.0.0.1 -P${PORT}"
+M="$ROOT"
 
 if ! $M -N -e "SELECT 1 FROM information_schema.tables WHERE table_schema='shopdb' AND table_name='orders'" 2>/dev/null | grep -q 1; then
   echo ">> 建表"

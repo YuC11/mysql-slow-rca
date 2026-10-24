@@ -1739,7 +1739,7 @@ replica_preserve_commit_order ON
 | 脚本 | 作用 | 运行命令 |
 |---|---|---|
 | `00-up.sh` | 启动容器、建表、造数 | `bash demo/scripts/00-up.sh` |
-| `lib.sh` | 公共函数（计时、慢日志重置、digest 排行）；凭据走 `.my-*.cnf`（600 权限） | 被其他脚本 source |
+| `lib.sh` | 公共函数（计时、慢日志重置、digest 排行）；首次 source 自动生成凭据文件 `.my-*.cnf`（600 权限，不入库） | 被其他脚本 source |
 | `10-case1-slow-sql.sh` | 案例一：7 条慢 SQL + 优化对比（含隐式转换、统计过期） | `bash demo/scripts/10-case1-slow-sql.sh > demo/logs/case1.out 2>&1` |
 | `20-case2-lock.sh` | 案例二：行锁/锁全表/长事务+purge 量化/MDL/死锁/间隙锁 | `bash demo/scripts/20-case2-lock.sh > demo/logs/case2.out 2>&1` |
 | `30-case3-connections.sh` | 案例三：线程打满 + 连接打满 | `bash demo/scripts/30-case3-connections.sh > demo/logs/case3.out 2>&1` |

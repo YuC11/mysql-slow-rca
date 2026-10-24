@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 # 公共函数库：所有案例脚本 source 本文件
 PORT=${PORT:-13306}
-# 凭据走 defaults 文件（600 权限），避免命令行明文密码与 Warning 刷屏
+# 凭据走 defaults 文件（600 权限），避免命令行明文密码与 Warning 刷屏；
+# 文件不入库（.gitignore），首次 source 本文件时自动生成
 CONF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ensure_cnf(){
+  local f u p
+  for f in "$CONF_DIR/.my-root.cnf" "$CONF_DIR/.my-user1.cnf"; do
+    [ -f "$f" ] && continue
+    case "$f" in
+      *root*) u=root;  p=root123  ;;
+      *)      u=user1; p=passwd1 ;;
+    esac
+    printf '[client]\nuser=%s\npassword=%s\n' "$u" "$p" > "$f"
+    chmod 600 "$f"
+  done
+}
+ensure_cnf
 MYSQL="mysql --defaults-extra-file=${CONF_DIR}/.my-user1.cnf -h127.0.0.1 -P${PORT} shopdb"
 ROOT="mysql --defaults-extra-file=${CONF_DIR}/.my-root.cnf -h127.0.0.1 -P${PORT}"
 SLOWLOG=demo/logs/slow.log

@@ -26,7 +26,7 @@ bash demo/scripts/99-down.sh
 #    彻底清理（连容器/数据卷/日志一起删）：bash demo/scripts/99-down.sh --all
 ```
 
-- 连接：`user1 / passwd1`（业务）、`root / root123`（诊断）；脚本凭据走 `demo/scripts/.my-*.cnf`（600 权限）
+- 连接：`user1 / passwd1`（业务）、`root / root123`（诊断）；脚本凭据走 `demo/scripts/.my-*.cnf`（首次运行自动生成，600 权限，不入库）
 - 端口：`13306`；从库：`13307`
 - 数据：订单 100 万 / 明细 200 万 / 支付 90 万
 
