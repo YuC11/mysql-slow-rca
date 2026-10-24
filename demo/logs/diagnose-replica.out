@@ -1,0 +1,107 @@
+
+[1;36m========== 0. 实例信息 ==========[0m
+（容器核数：2，判定阈值随核数联动）
+
+[1;36m========== 1. 五个黄金信号（阈值见手册 §2.3 / §2.6） ==========[0m
+[PASS] Threads_running=3（阈值 ≤ 核数2×2=4）
+[PASS] Threads_connected=2 / 上限50（4%）
+[INFO] Slow_queries=28（累计，≈5.3 次/分钟；累计值不能单独判定，以 digest 排行为准）
+[PASS] 行锁等待中 Innodb_row_lock_current_waits=0（历史累计 Innodb_row_lock_waits=0）
+[PASS] buffer pool 命中率 99.979%（≥ 99%；累计口径，重启后前期偏低属正常）
+[INFO] Created_tmp_disk_tables=11（累计；>0 说明发生过排序/聚合落盘，结合 digest 看是哪条 SQL）
+
+[1;36m========== 2. 连接都去哪了（按 用户/来源/状态 聚合） ==========[0m
+user	ip	command	state	conns
+root	192.168.215.1	Query	executing	1
+repl	192.168.215.1	Binlog Dump GTID	Source has sent all binlog to replica; waiting for more updates	1
+
+[1;36m========== 3. 慢 SQL 排行（digest 按总耗时 Top10，标注无索引/磁盘临时表） ==========[0m
+*************************** 1. row ***************************
+     sql_digest: CALL `p_insert` (?)
+         次数: 2
+     总耗时s: 0.505
+        平均s: 0.2525
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+*************************** 2. row ***************************
+     sql_digest: TRUNCATE `cfg_test`
+         次数: 2
+     总耗时s: 0.063
+        平均s: 0.0315
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+*************************** 3. row ***************************
+     sql_digest: CREATE TABLE `cfg_test` ( `id` INTEGER AUTO_INCREMENT PRIMARY KEY , `v
+         次数: 1
+     总耗时s: 0.037
+        平均s: 0.0367
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+*************************** 4. row ***************************
+     sql_digest: DROP TABLE IF EXISTS `cfg_test`
+         次数: 1
+     总耗时s: 0.01
+        平均s: 0.0102
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+*************************** 5. row ***************************
+     sql_digest: DROP PROCEDURE IF EXISTS `p_insert`
+         次数: 1
+     总耗时s: 0.008
+        平均s: 0.008
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+*************************** 6. row ***************************
+     sql_digest: CREATE PROCEDURE `p_insert` ( IN `n` INTEGER ) BEGIN DECLARE `i` INTEG
+         次数: 1
+     总耗时s: 0.007
+        平均s: 0.0067
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+*************************** 7. row ***************************
+     sql_digest: SELECT `ROUND` ( TIMESTAMPDIFF ( MICROSECOND , @? , NOW (?) ) / ?, ...
+         次数: 2
+     总耗时s: 0.001
+        平均s: 0.0003
+   扫描行数: 2
+      无索引: 0
+磁盘临时表: 0
+*************************** 8. row ***************************
+     sql_digest: SET @? = NOW (?)
+         次数: 2
+     总耗时s: 0
+        平均s: 0.0001
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+[PASS] digest Top10 均无无索引访问、无磁盘临时表
+
+[1;36m========== 4. 长事务（>60s 必须处置） ==========[0m
+[PASS] 无超过 10s 的事务
+
+[1;36m========== 5. 锁等待关系（sys.innodb_lock_waits） ==========[0m
+[PASS] 当前无锁等待链
+
+[1;36m========== 6. 复制状态（优先探测本环境从库 13307，其次本机 REPLICA 配置） ==========[0m
+（数据来自从库 mysql-replica:13307）
+           Replica_IO_Running: Yes
+          Replica_SQL_Running: Yes
+                   Last_Error: 
+              Relay_Log_Space: 40373081
+        Seconds_Behind_Source: 0
+    Replica_SQL_Running_State: Replica has read all relay log; waiting for more updates
+[PASS] 复制正常，延迟 0s
+
+[1;36m========== 7. 容器资源（对照案例四） ==========[0m
+CPU=5.61%  内存=667.8MiB / 1GiB
+
+[1;36m========== 8. 诊断结论（按手册 §2.4 决策树归类） ==========[0m
+未命中任何异常信号，数据库侧暂时健康。
+若业务仍反馈"慢"：回到手册 §2.2 做应用侧分段（连接池等待 / 网络 / DB 执行 / 结果集传输），
+不要在数据库上继续找。

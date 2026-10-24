@@ -1,0 +1,146 @@
+
+[1;36m========== 0. 资源基线 ==========[0m
+容器 mysql-demo  CPU=1.07%  内存=626.6MiB / 1GiB
+Variable_name	Value
+innodb_buffer_pool_size	134217728
+join_buffer_size	262144
+max_heap_table_size	2097152
+sort_buffer_size	1048576
+tmp_table_size	2097152
+
+[1;36m========== 1. CPU 瓶颈：计算密集型 SQL 把单核打满 ==========[0m
+执行 1 次 → 平均 0.8457 s/次 | 扫描行数 1000000 | 无索引访问 0 次 | 磁盘临时表 0
+执行中 CPU=1.45%
+
+[1;33m--- EXPLAIN：全表扫描 + 每行一次 MD5 ---[0m
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: orders
+   partitions: NULL
+         type: index
+possible_keys: NULL
+          key: uk_order_no
+      key_len: 130
+          ref: NULL
+         rows: 995350
+     filtered: 100.00
+        Extra: Using where; Using index
+
+[1;33m--- 16 并发把 CPU 堆满（注意：RAND() 在 WHERE 里，实际是全表扫描） ---[0m
+压测中 CPU=201.29% 内存=630.2MiB / 1GiB
+Variable_name	Value
+Threads_connected	18
+Threads_running	18
+
+[1;36m========== 2. 内存瓶颈：buffer pool 只有 128M，热数据放不下 ==========[0m
+
+[1;33m--- 全表扫一遍前后，物理读的变化 ---[0m
+Variable_name	Value
+Innodb_buffer_pool_pages_data	8110
+Innodb_buffer_pool_pages_free	0
+Innodb_buffer_pool_read_requests	95639687
+Innodb_buffer_pool_reads	134327
+Variable_name	Value
+Innodb_buffer_pool_pages_data	8110
+Innodb_buffer_pool_pages_free	0
+Innodb_buffer_pool_read_requests	95743370
+Innodb_buffer_pool_reads	136168
+
+[1;33m--- 命中率（低于 99% 就要警惕） ---[0m
+命中率_pct	逻辑读	物理读
+99.858	95743370	136168
+
+[1;33m--- 内存总量分布（sys schema） ---[0m
+total_allocated
+487.16 MiB
+MB	EVENT_NAME
+130.87890625	memory/innodb/buf_buf_pool
+40.28320313	memory/performance_schema/events_statements_summary_by_digest
+24.00006104	memory/innodb/ut0link_buf
+22.21984386	memory/innodb/lock0lock
+16.00096130	memory/innodb/log_buffer_memory
+
+[1;33m--- SHOW ENGINE INNODB STATUS → BUFFER POOL AND MEMORY ---[0m
+BUFFER POOL AND MEMORY
+----------------------
+Total large memory allocated 0
+Dictionary memory allocated 689191
+Buffer pool size   8192
+Free buffers       0
+Database pages     8110
+Old database pages 2974
+Modified db pages  0
+Pending reads      0
+Pending writes: LRU 0, flush list 0, single page 0
+Pages made young 87606, not young 7464088
+0.41 youngs/s, 10670.67 non-youngs/s
+Pages read 246420, created 61482, written 70006
+190.05 reads/s, 0.00 creates/s, 0.00 writes/s
+Buffer pool hit rate 995 / 1000, young-making rate 0 / 1000 not 299 / 1000
+
+[1;36m========== 3. 磁盘 IO：全表扫描 + 排序溢出 ==========[0m
+
+[1;33m--- host 侧 iostat（观察 tps / MB/s 抬升；macOS 与 Linux 语法不同） ---[0m
+
+[1;33m--- MySQL 侧 IO 计数 ---[0m
+              disk0 
+    KB/t  tps  MB/s 
+    9.83 2319 22.25 
+Variable_name	Value
+Innodb_data_read	4037429760
+Innodb_data_reads	259370
+Innodb_data_writes	303048
+Innodb_os_log_written	1028805120
+Variable_name	Value
+Innodb_data_read	4281928192
+Innodb_data_reads	274293
+Innodb_data_writes	303048
+Innodb_os_log_written	1028805120
+   32.00    1  0.03 
+   32.00    1  0.03 
+
+[1;36m========== 4. 临时表 / 排序：小 tmp_table_size 把排序挤到磁盘 ==========[0m
+Variable_name	Value
+max_heap_table_size	2097152
+tmp_table_size	2097152
+Variable_name	Value
+Created_tmp_disk_tables	1
+Created_tmp_tables	1
+Sort_merge_passes	0
+Sort_rows	10
+
+[1;36m========== 5. 网络：大结果集把带宽打满 ==========[0m
+real 0.90
+本次结果集传输：25 MB
+300000 行 × 约 150 字节 ≈ 45MB，跨公网/跨可用区时 RTT 会放大成大问题
+
+[1;36m========== 6. buffer pool 预热：重启后为什么前几分钟慢 ==========[0m
+注意：本节会 docker restart mysql-demo（重启后 buffer pool 清空、计数器归零）
+
+[1;33m--- ① 重启前（池是热的）：同一条报表 SQL 的基线 ---[0m
+执行 1 次 → 平均 0.1437 s/次 | 扫描行数 111122 | 无索引访问 0 次 | 磁盘临时表 1
+
+[1;33m--- ② 重启实例 ---[0m
+   实例已就绪（Uptime=2s）
+
+[1;33m--- ③ 冷启动后连续执行同一条 SQL：耗时与命中率的爬升曲线 ---[0m
+--- 第 1 遍 ---
+执行 1 次 → 平均 0.1404 s/次 | 扫描行数 111122 | 无索引访问 0 次 | 磁盘临时表 1
+命中率_pct	pages_in_pool
+98.71	2445
+--- 第 2 遍 ---
+执行 1 次 → 平均 0.128 s/次 | 扫描行数 111122 | 无索引访问 0 次 | 磁盘临时表 1
+命中率_pct	pages_in_pool
+99.314	2445
+--- 第 3 遍 ---
+执行 1 次 → 平均 0.1294 s/次 | 扫描行数 111122 | 无索引访问 0 次 | 磁盘临时表 1
+命中率_pct	pages_in_pool
+99.533	2445
+--- 第 4 遍 ---
+执行 1 次 → 平均 0.1272 s/次 | 扫描行数 111122 | 无索引访问 0 次 | 磁盘临时表 1
+命中率_pct	pages_in_pool
+99.646	2445
+解读：第 1 遍几乎全是物理读（命中率低、耗时最高），此后热点页被逐批载入，
+耗时与命中率逐步逼近重启前水平——这就是'重启后短时间慢、会自愈'的机制，
+也是云数据库'预热/内存保障'功能的卖点。若长时间不恢复 → 内存确实不够（回到 §7.3）。

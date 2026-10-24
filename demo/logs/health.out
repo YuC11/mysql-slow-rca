@@ -1,0 +1,50 @@
+
+===== 1. 五个黄金信号（阈值见手册 §2.3 / §2.6）=====
+指标	值	判定
+连接数	Threads_running=3 / Threads_connected=2 / 上限=50	PASS
+慢查询	Slow_queries=22	INFO 累计值，以digest排行为准
+行锁等待	Innodb_row_lock_waits=0 / current=0	PASS（历史累计见值）
+buffer pool 命中率	99.976%	PASS 累计口径
+磁盘临时表	Created_tmp_disk_tables=6	WARN 发生过落盘，看digest定位SQL
+
+===== 2. 连接都去哪了 =====
+user	ip	command	state	conns
+root	192.168.215.1	Query	executing	1
+repl	192.168.215.1	Binlog Dump GTID	Source has sent all binlog to replica; waiting for more updates	1
+
+===== 3. 谁跑得最久 / 谁在等 =====
+id	user	ip	db	command	time	state	sql_head
+127	repl	192.168.215.1	NULL	Binlog Dump GTID	23	Source has sent all binlog to replica; waiting for more updates	NULL
+130	root	192.168.215.1	NULL	Query	1	executing	SELECT id, user, SUBSTRING_INDEX(host, ':', 1) AS ip, db, co
+
+===== 4. 长事务（>10s 就值得看一眼） =====
+
+===== 5. 锁等待关系 =====
+
+===== 6. 慢 SQL Top10（按总耗时） =====
+sql_digest	次数	总耗时s	平均s	扫描行数	无索引次数	磁盘临时表
+INSERT INTO `big_order` ( `order_no` , `amount` , STATUS , `remark` , `created_a	4	9.124	2.2811	240	4	0
+CALL `p_insert` (?)	8	2.236	0.2795	0	0	0
+TRUNCATE `cfg_test`	8	0.318	0.0398	0	0	0
+CREATE TABLE `cfg_test` ( `id` INTEGER AUTO_INCREMENT PRIMARY KEY , `v` INTEGER 	4	0.128	0.032	0	0	0
+SELECT `c` . `city` , COUNT ( * ) `cnt` , SUM ( `o` . `pay_amount` ) `amt` FROM 	1	0.127	0.1272	111122	0	1
+DROP TABLE IF EXISTS `cfg_test`	4	0.093	0.0234	0	0	0
+CREATE TABLE IF NOT EXISTS `big_order` ( `id` INT8 AUTO_INCREMENT PRIMARY KEY , 	2	0.042	0.0209	0	0	0
+CREATE TABLE `big_order` ( `id` INT8 AUTO_INCREMENT PRIMARY KEY , `order_no` VAR	2	0.032	0.0161	0	0	0
+DROP PROCEDURE IF EXISTS `p_insert`	4	0.028	0.0071	0	0	0
+CREATE PROCEDURE `p_insert` ( IN `n` INTEGER ) BEGIN DECLARE `i` INTEGER DEFAULT	4	0.025	0.0062	0	0	0
+
+===== 7. 复制状态 =====
+
+===== 8. 关键配置 =====
+VARIABLE_NAME	VARIABLE_VALUE
+innodb_buffer_pool_size	134217728
+innodb_flush_log_at_trx_commit	1
+innodb_io_capacity	200
+innodb_lock_wait_timeout	10
+long_query_time	0.200000
+max_connections	50
+sort_buffer_size	1048576
+sync_binlog	1
+tmp_table_size	2097152
+transaction_isolation	REPEATABLE-READ

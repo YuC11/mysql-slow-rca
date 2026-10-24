@@ -1,0 +1,33 @@
+
+[1;36m========== 轻量清理：保留容器与业务数据，清除演示残留 ==========[0m
+
+[1;33m--- 1. 会话：KILL 全部 user1 连接（case3 空闲连接等残留） ---[0m
+   已清理 0 个 user1 连接
+
+[1;33m--- 2. 对象：演示专用表 / 存储过程 / 复制库 / 复制账号 ---[0m
+   已清理 cfg_test / demo_stats / demo_bloat / purge_demo / p_insert / repltest / repl
+
+[1;33m--- 3. 结构：case1 加的索引、case2 残留的列 ---[0m
+   (idx_sku 不存在，跳过)
+   (idx_created_cust_amount 不存在，跳过)
+   (tmp_demo_col 不存在，跳过)
+
+[1;33m--- 4. 数据：恢复被演示改动过的业务行 ---[0m
+   inventory 按对账恢复；orders.id=1 remark、inventory_log.biz_no=BIZ00000001、promo_code 1005 已还原
+
+[1;33m--- 5. 参数：RESET PERSIST + 恢复运行时改动 ---[0m
+   已清除 mysqld-auto.cnf 并恢复 sync_binlog/flush_log_at_trx_commit/buffer pool/general_log
+
+[1;33m--- 6. 状态：digest / 状态计数器 / 慢日志 ---[0m
+   digest 与状态计数器已清零，慢日志已清空
+
+[1;33m--- 7. 复制：从库可达则停掉并重置通道 ---[0m
+   从库通道已停止并重置
+
+[1;33m--- 8. 文件：/tmp 演示残留 ---[0m
+   已清理 /tmp/case2_* /tmp/case3_* /tmp/case4_*（case1~5.out 证据文件保留）
+
+[1;36m========== 清理后自检 ==========[0m
+item	item2	item3
+演示对象残留: 0	user1 连接: 0	持久化参数: 0
+>> 完成

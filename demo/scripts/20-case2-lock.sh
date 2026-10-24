@@ -57,8 +57,10 @@ wait $A 2>/dev/null
 
 # ==================================================================
 hr "3. 长事务：一条不提交的事务拖住 purge 与 DDL"
-echo "会话 A：BEGIN → 更新一行 → 挂起 20s（模拟事务里调用外部接口）"
-$MYSQL -e "BEGIN; UPDATE orders SET remark='长事务演示' WHERE id=1; SELECT SLEEP(20); COMMIT;" >/dev/null 2>&1 &
+echo "会话 A：BEGIN → 查一行（建 read view）→ 更新一行 → 挂起 30s（模拟事务里调用外部接口）"
+# 注意必须先 SELECT：只有做过一致性读的事务才持有 read view，
+# purge 线程才真正被它挡住；只做 UPDATE 的事务不会（见下方量化演示）
+$MYSQL -e "BEGIN; SELECT id FROM orders WHERE id=1; UPDATE orders SET remark='长事务演示' WHERE id=1; SELECT SLEEP(30); COMMIT;" >/dev/null 2>&1 &
 A=$!
 sleep 2
 $ROOT -e "SELECT trx_id, trx_state, TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS age_s,
@@ -66,6 +68,32 @@ $ROOT -e "SELECT trx_id, trx_state, TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS
           FROM information_schema.innodb_trx\G" 2>/dev/null
 sub "History list length（undo 无法 purge 的直接证据）"
 INNODB_STATUS | grep -E "History list length|Trx id counter|Purge done" | head -5
+
+sub "量化 purge 滞后：长事务期间持续提交写入，purge 线程被冻住"
+$ROOT -e "DROP TABLE IF EXISTS shopdb.purge_demo;
+          CREATE TABLE shopdb.purge_demo (id INT PRIMARY KEY, v INT);
+          INSERT INTO shopdb.purge_demo VALUES (1,0);" 2>/dev/null
+# 写入方：每秒提交一次 UPDATE。这些事务早已提交，但长事务的 read view
+# 让 purge 不敢清理它们之后的 undo —— 看下面 gap 的一路拉大
+( for i in $(seq 1 10); do
+    $MYSQL -e "UPDATE purge_demo SET v=v+1;" >/dev/null 2>&1
+    sleep 1
+  done ) &
+W=$!
+purge_gap(){
+  $ROOT -e "SHOW ENGINE INNODB STATUS\G" 2>/dev/null \
+    | awk '/Trx id counter/{c=$4} /Purge done for/{p=$7}
+           END{printf "%s %s %d", c, p, (c-p>=0?c-p:0)}'
+}
+echo "t      trx_id_counter  purge_done  gap（gap=被拖住、无法清理 undo 的事务数）"
+for i in $(seq 1 10); do
+  echo "t+${i}s  $(purge_gap)"
+  sleep 1
+done
+wait $W 2>/dev/null
+echo "↑ gap 一路拉大：写入方明明都已提交，purge 却一步没走"
+echo "后果：purge 停摆期间 undo 持续累积（History list length 只涨不跌）、"
+echo "回滚段膨胀、磁盘空间不释放；表越大后果越重。生产上长事务是头号空间杀手。"
 
 sub "长事务阻塞 DDL（MDL），进而阻塞该表所有请求"
 $ROOT -e "ALTER TABLE shopdb.orders ADD COLUMN tmp_demo_col INT;" >/tmp/case2_ddl.log 2>&1 &
@@ -79,6 +107,13 @@ $ROOT -e "SELECT id, user, db, command, time, state, LEFT(info,50) info
 wait $A 2>/dev/null; sleep 2
 wait $D 2>/dev/null; wait $Q 2>/dev/null
 $ROOT -e "ALTER TABLE shopdb.orders DROP COLUMN tmp_demo_col;" 2>/dev/null
+
+sub "对照：长事务提交后，purge 一口气追上来（gap 塌缩）"
+for i in 1 2 3; do
+  echo "t+${i}s  $(purge_gap)"
+  sleep 1
+done
+$ROOT -e "DROP TABLE shopdb.purge_demo;" 2>/dev/null
 
 # ==================================================================
 hr "4. 死锁：两个事务交叉更新"

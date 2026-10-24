@@ -3,23 +3,58 @@
 -- 用法：mysql -h127.0.0.1 -P13306 -uroot -proot123 < demo/sql/99-health-check.sql
 -- ============================================================
 
-SELECT '===== 1. 五个黄金信号 =====' AS '';
+SELECT '===== 1. 五个黄金信号（阈值见手册 §2.3 / §2.6）=====' AS '';
 
-SELECT '连接' AS 指标,
-       CONCAT('Threads_running=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_running'),
-              ' / Threads_connected=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected'),
-              ' / 上限=', (SELECT VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME='max_connections')) AS 值
-UNION ALL
-SELECT '慢查询', CONCAT('Slow_queries=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Slow_queries'))
-UNION ALL
-SELECT '锁等待', CONCAT('Innodb_row_lock_waits=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_waits'),
-                       ' / current=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_current_waits'))
-UNION ALL
-SELECT '命中率', CONCAT(ROUND(100*(1-r.v/q.v),3), '%')
-FROM (SELECT VARIABLE_VALUE+0 v FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_reads') r,
-     (SELECT VARIABLE_VALUE+0 v FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_read_requests') q
-UNION ALL
-SELECT '临时表', CONCAT('Created_tmp_disk_tables=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Created_tmp_disk_tables'));
+-- 判定口径：Threads_running 需对照容器核数（诊断脚本 diagnose.sh 会按核数联动判定）；
+-- 命中率/慢查询为开机累计值，趋势判断用 baseline.sh diff
+SELECT s.指标, s.值,
+       CASE s.指标
+       WHEN '连接数' THEN
+         CASE WHEN s.pct >= 95 THEN 'FAIL 即将打满(1040)'
+              WHEN s.pct >= 80 THEN 'WARN 超80%预警线'
+              ELSE 'PASS' END
+       WHEN '行锁等待' THEN
+         CASE WHEN s.cur > 0 THEN 'FAIL 有会话正在等锁'
+              ELSE 'PASS（历史累计见值）' END
+       WHEN 'buffer pool 命中率' THEN
+         CASE WHEN s.pct2 < 97 THEN 'FAIL 内存不足/全表扫描泛滥'
+              WHEN s.pct2 < 99 THEN 'WARN 累计口径，看趋势'
+              ELSE 'PASS 累计口径' END
+       WHEN '磁盘临时表' THEN
+         CASE WHEN s.tmp > 0 THEN 'WARN 发生过落盘，看digest定位SQL'
+              ELSE 'PASS' END
+       ELSE 'INFO 累计值，以digest排行为准'
+       END AS 判定
+FROM (
+  SELECT '连接数' AS 指标,
+         CONCAT('Threads_running=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_running'),
+                ' / Threads_connected=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected'),
+                ' / 上限=', (SELECT VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME='max_connections')) AS 值,
+         100*(SELECT VARIABLE_VALUE+0 FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected')
+             /(SELECT VARIABLE_VALUE+0 FROM performance_schema.global_variables WHERE VARIABLE_NAME='max_connections') AS pct,
+         NULL AS cur, NULL AS pct2, NULL AS tmp
+  UNION ALL
+  SELECT '慢查询', CONCAT('Slow_queries=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Slow_queries')),
+         NULL, NULL, NULL, NULL
+  UNION ALL
+  SELECT '行锁等待',
+         CONCAT('Innodb_row_lock_waits=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_waits'),
+                ' / current=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_current_waits')),
+         NULL,
+         (SELECT VARIABLE_VALUE+0 FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_current_waits'),
+         NULL, NULL
+  UNION ALL
+  SELECT 'buffer pool 命中率',
+         CONCAT(ROUND(100*(1-r.v/q.v),3), '%'),
+         NULL, NULL,
+         100*(1-r.v/q.v), NULL
+  FROM (SELECT VARIABLE_VALUE+0 v FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_reads') r,
+       (SELECT VARIABLE_VALUE+0 v FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_read_requests') q
+  UNION ALL
+  SELECT '磁盘临时表', CONCAT('Created_tmp_disk_tables=', (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Created_tmp_disk_tables')),
+         NULL, NULL, NULL,
+         (SELECT VARIABLE_VALUE+0 FROM performance_schema.global_status WHERE VARIABLE_NAME='Created_tmp_disk_tables')
+) s;
 
 SELECT '===== 2. 连接都去哪了 =====' AS '';
 

@@ -1,0 +1,87 @@
+
+[1;36m========== 1. 容量现状 ==========[0m
+Variable_name	Value
+interactive_timeout	28800
+max_connections	50
+max_user_connections	0
+thread_cache_size	8
+wait_timeout	28800
+Variable_name	Value
+Aborted_connects	0
+Connection_errors_max_connections	0
+Max_used_connections	1
+Threads_connected	1
+Threads_running	2
+连接池容量测算：3 个 Pod × maxPoolSize 20 = 60 > max_connections 50 → 必然打满
+
+[1;36m========== 2. 情形 A：Threads_running 打满（慢 SQL 占住工作线程，连接数并未超限） ==========[0m
+
+[1;33m--- 压测进行中：并发 20，慢 SQL 平均 0.5s ---[0m
+Variable_name	Value
+Threads_connected	22
+Threads_running	22
+command	state	c
+Query	executing	21
+Sleep		1
+
+[1;36m========== 3. 情形 B：连接池把 max_connections 占满（大量 Sleep 连接） ==========[0m
+
+[1;33m--- 应用侧最先拿到的报错 ---[0m
+   6 ERROR 1040 (08004): Too many connections
+   4 ERROR 1040 (HY000): Too many connections
+
+[1;33m--- ① 总量：Threads_connected 已到 51（50 + root 保留连接） ---[0m
+Variable_name	Value
+Aborted_connects	6
+Connection_errors_max_connections	10
+Max_used_connections	51
+Threads_connected	51
+Threads_running	2
+
+[1;33m--- ② 按 用户 / 来源IP / 状态 聚合 ---[0m
+user	ip	command	conns
+user1	192.168.215.1	Sleep	50
+root	192.168.215.1	Query	1
+event_scheduler	localhost	Daemon	1
+
+[1;33m--- ③ 明细：Sleep 多 = 连接池闲置/泄漏；Query 多且 time 大 = 慢 SQL 占线程 ---[0m
+id	user	ip	db	command	time	state
+284	user1	192.168.215.1	shopdb	Sleep	6	
+277	user1	192.168.215.1	shopdb	Sleep	6	
+285	user1	192.168.215.1	shopdb	Sleep	6	
+269	user1	192.168.215.1	shopdb	Sleep	6	
+293	user1	192.168.215.1	shopdb	Sleep	6	
+309	user1	192.168.215.1	shopdb	Sleep	6	
+317	user1	192.168.215.1	shopdb	Sleep	6	
+292	user1	192.168.215.1	shopdb	Sleep	6	
+
+[1;33m--- ④ performance_schema.threads：连接与 OS 线程一一对应 ---[0m
+TYPE	PROCESSLIST_COMMAND	c
+FOREGROUND	Daemon	2
+FOREGROUND	Sleep	50
+FOREGROUND	Query	1
+
+[1;33m--- ⑤ root 仍有 1 个保留连接可登录（max_connections+1），这是最后的救火通道 ---[0m
+rescue
+root 登录成功
+
+[1;36m========== 4. 处置：先止血，再定位根因 ==========[0m
+可清理的空闲连接
+50
+Variable_name	Value
+Threads_connected	1
+Threads_running	2
+
+[1;36m========== 5. 关键参数与容量口径 ==========[0m
+Variable_name	Value
+back_log	50
+interactive_timeout	28800
+max_connections	50
+thread_cache_size	8
+wait_timeout	28800
+
+容量公式：
+  应用最大连接数 = Pod 数 × maxPoolSize × (1 + 突发冗余)
+  DB max_connections ≥ Σ(各应用最大连接数) + 运维/备份/监控预留 20%
+  经验：每连接约 0.3~1MB 基础内存；max_connections 不是越大越好，
+        决定吞吐的是 Threads_running（并发执行数），而不是 Threads_connected

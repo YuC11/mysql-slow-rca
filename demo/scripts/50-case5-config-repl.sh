@@ -57,7 +57,51 @@ sub "SET PERSIST：写进 mysqld-auto.cnf，重启也生效"
 $ROOT -e "SET PERSIST max_connections=50; SELECT * FROM performance_schema.persisted_variables;" 2>/dev/null
 
 # ==================================================================
-hr "3. 复制：从库延迟的产生与定位"
+hr "3. 表膨胀/碎片：删了数据为什么没变快"
+$ROOT -e "DROP TABLE IF EXISTS shopdb.demo_bloat;
+  CREATE TABLE shopdb.demo_bloat (
+    id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    payload    VARCHAR(255) NOT NULL,
+    created_at DATETIME NOT NULL,
+    PRIMARY KEY (id)
+  ) ENGINE=InnoDB;" 2>/dev/null
+sub "① 插入 10 万行（每行约 200 字节）"
+$ROOT -e "INSERT INTO shopdb.demo_bloat (payload, created_at)
+  SELECT REPEAT('x', 200), created_at FROM shopdb.orders WHERE id <= 100000;" >/dev/null 2>&1
+$ROOT -e "ANALYZE TABLE shopdb.demo_bloat;" >/dev/null 2>&1
+$ROOT -e "SELECT table_rows AS 行数,
+       ROUND(data_length/1024/1024,1) AS data_mb,
+       ROUND(data_free/1024/1024,1) AS free_mb
+  FROM information_schema.tables
+  WHERE table_schema='shopdb' AND table_name='demo_bloat';" 2>/dev/null
+docker exec mysql-demo sh -c 'ls -lh /var/lib/mysql/shopdb/demo_bloat.ibd' 2>/dev/null
+
+sub "② DELETE 80%：行数掉了，磁盘文件一分不小（页内全是空洞）"
+$ROOT -e "DELETE FROM shopdb.demo_bloat WHERE id % 5 <> 0;" >/dev/null 2>&1
+$ROOT -e "ANALYZE TABLE shopdb.demo_bloat;" >/dev/null 2>&1
+$ROOT -e "SELECT table_rows AS 行数,
+       ROUND(data_length/1024/1024,1) AS data_mb,
+       ROUND(data_free/1024/1024,1) AS free_mb
+  FROM information_schema.tables
+  WHERE table_schema='shopdb' AND table_name='demo_bloat';" 2>/dev/null
+docker exec mysql-demo sh -c 'ls -lh /var/lib/mysql/shopdb/demo_bloat.ibd' 2>/dev/null
+echo "后果：文件不缩小、buffer pool 里装的全是半空的页、全表扫描仍要走过空洞页——"
+echo "'DELETE 了一半数据，查询一点没变快'就是这么来的"
+
+sub "③ OPTIMIZE TABLE：重建表，空间真正还给操作系统"
+$ROOT -e "OPTIMIZE TABLE shopdb.demo_bloat;" 2>/dev/null
+$ROOT -e "SELECT table_rows AS 行数,
+       ROUND(data_length/1024/1024,1) AS data_mb,
+       ROUND(data_free/1024/1024,1) AS free_mb
+  FROM information_schema.tables
+  WHERE table_schema='shopdb' AND table_name='demo_bloat';" 2>/dev/null
+docker exec mysql-demo sh -c 'ls -lh /var/lib/mysql/shopdb/demo_bloat.ibd' 2>/dev/null
+echo "注意：OPTIMIZE = ALTER ... ENGINE=InnoDB，重建期间该表不可写（8.0 支持 INPLACE 但仍锁 DML）；"
+echo "线上大表请用 gh-ost / pt-online-schema-change。归档类'删旧数据'场景更优解是分区表 DROP PARTITION。"
+$ROOT -e "DROP TABLE shopdb.demo_bloat;" 2>/dev/null
+
+# ==================================================================
+hr "4. 复制：从库延迟的产生与定位"
 if ! docker ps --format '{{.Names}}' | grep -qx mysql-replica; then
   echo ">> 启动从库容器（13307）"
   docker rm -f mysql-replica >/dev/null 2>&1
@@ -73,17 +117,30 @@ if ! docker ps --format '{{.Names}}' | grep -qx mysql-replica; then
   done
 fi
 R="mysql --defaults-extra-file=demo/scripts/.my-root.cnf -h127.0.0.1 -P13307"
+if ! $R -N -e "SELECT 1" >/dev/null 2>&1; then
+  echo "!! 从库（13307）未就绪，复制演示终止（请检查 docker 状态后重跑本脚本）"
+  exit 1
+fi
 
-sub "从库先建库（replicate-do-db 的老坑：CREATE DATABASE 本身会被过滤掉）"
-$R -e "CREATE DATABASE IF NOT EXISTS repltest;" 2>/dev/null
+sub "从库重置为干净状态（清残留库/中继日志/本地 GTID，保证脚本可重复执行）"
+# 注意 replicate-do-db 的两个坑：
+# 1) 无默认库的 DROP/CREATE DATABASE 语句不会通过复制传到从库 —— 库要手工建
+# 2) gtid_purged 对齐位点时，位点之前的所有事务（含建表 DDL）都会被从库跳过
+#    —— 表也要手工预建，否则回放第一个 INSERT 就报 1146 Table doesn't exist
+$R -e "DROP DATABASE IF EXISTS repltest; CREATE DATABASE repltest;
+  USE repltest;
+  CREATE TABLE big_order (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY, order_no VARCHAR(32), amount DECIMAL(12,2),
+    status TINYINT, remark VARCHAR(128), created_at DATETIME, KEY idx_status (status));" 2>/dev/null
+$R -e "STOP REPLICA; RESET REPLICA ALL; RESET MASTER;" 2>/dev/null
 
-sub "主库准备复制账号与测试表（DDL 必须带默认库，否则同样被过滤）"
+sub "主库准备复制账号与测试表（DROP+CREATE 保证建表 DDL 一定进 binlog）"
 $ROOT -e "
   CREATE USER IF NOT EXISTS 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'repl123';
   GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';" 2>/dev/null
-$ROOT -e "CREATE DATABASE IF NOT EXISTS repltest;
+$ROOT -e "DROP DATABASE IF EXISTS repltest; CREATE DATABASE repltest;
   USE repltest;
-  CREATE TABLE IF NOT EXISTS big_order (
+  CREATE TABLE big_order (
     id BIGINT AUTO_INCREMENT PRIMARY KEY, order_no VARCHAR(32), amount DECIMAL(12,2),
     status TINYINT, remark VARCHAR(128), created_at DATETIME, KEY idx_status (status));" 2>/dev/null
 

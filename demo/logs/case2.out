@@ -1,0 +1,278 @@
+
+[1;36m========== 0. 基线：当前确实没有锁等待 ==========[0m
+lock_waits
+0
+Variable_name	Value
+Innodb_row_lock_current_waits	0
+Innodb_row_lock_time	0
+Innodb_row_lock_time_avg	0
+Innodb_row_lock_time_max	0
+Innodb_row_lock_waits	0
+
+[1;36m========== 1. 行锁等待：热点库存行（秒杀扣减） ==========[0m
+会话 A：BEGIN → 扣减 product_id=1 → 不提交，持锁 15s
+会话 B：扣减同一行，被阻塞（innodb_lock_wait_timeout=8）
+
+[1;33m--- ① sys.innodb_lock_waits：谁在等谁 ---[0m
+*************************** 1. row ***************************
+      wait_age: 00:00:03
+   waiting_pid: 193
+ waiting_query: UPDATE inventory SET stock=stock-1 WHERE product_id=1
+  blocking_pid: 192
+blocking_query: SELECT SLEEP(15)
+  locked_table: `shopdb`.`inventory`
+  locked_index: PRIMARY
+   locked_type: RECORD
+
+[1;33m--- ② performance_schema.data_locks：锁的粒度与模式 ---[0m
+*************************** 1. row ***************************
+        trx: 2145
+        tbl: inventory
+        idx: NULL
+  LOCK_TYPE: TABLE
+  LOCK_MODE: IX
+LOCK_STATUS: GRANTED
+  LOCK_DATA: NULL
+*************************** 2. row ***************************
+        trx: 2146
+        tbl: inventory
+        idx: NULL
+  LOCK_TYPE: TABLE
+  LOCK_MODE: IX
+LOCK_STATUS: GRANTED
+  LOCK_DATA: NULL
+*************************** 3. row ***************************
+        trx: 2145
+        tbl: inventory
+        idx: PRIMARY
+  LOCK_TYPE: RECORD
+  LOCK_MODE: X,REC_NOT_GAP
+LOCK_STATUS: GRANTED
+  LOCK_DATA: 1
+*************************** 4. row ***************************
+        trx: 2146
+        tbl: inventory
+        idx: PRIMARY
+  LOCK_TYPE: RECORD
+  LOCK_MODE: X,REC_NOT_GAP
+LOCK_STATUS: WAITING
+  LOCK_DATA: 1
+
+[1;33m--- ③ information_schema.innodb_trx：事务画像 ---[0m
+*************************** 1. row ***************************
+             trx_id: 2145
+          trx_state: RUNNING
+        trx_started: 2026-10-24 00:12:53
+              age_s: 5
+    trx_rows_locked: 1
+  trx_rows_modified: 1
+trx_isolation_level: REPEATABLE READ
+            cur_sql: SELECT SLEEP(15)
+*************************** 2. row ***************************
+             trx_id: 2146
+          trx_state: LOCK WAIT
+        trx_started: 2026-10-24 00:12:55
+              age_s: 3
+    trx_rows_locked: 1
+  trx_rows_modified: 0
+trx_isolation_level: REPEATABLE READ
+            cur_sql: UPDATE inventory SET stock=stock-1 WHERE product_id=1
+
+[1;33m--- ④ SHOW ENGINE INNODB STATUS → TRANSACTIONS ---[0m
+TRANSACTIONS
+------------
+Trx id counter 2147
+Purge done for trx's n:o < 2142 undo n:o < 0 state: running but idle
+History list length 24
+LIST OF TRANSACTIONS FOR EACH SESSION:
+---TRANSACTION 562948359463720, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948359461296, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 562948359460488, not started
+0 lock struct(s), heap size 1128, 0 row lock(s)
+---TRANSACTION 2146, ACTIVE 3 sec starting index read
+mysql tables in use 1, locked 1
+LOCK WAIT 2 lock struct(s), heap size 1128, 1 row lock(s)
+MySQL thread id 193, OS thread handle 281472635825920, query id 611 192.168.215.1 user1 updating
+UPDATE inventory SET stock=stock-1 WHERE product_id=1
+------- TRX HAS BEEN WAITING 3 SEC FOR THIS LOCK TO BE GRANTED:
+RECORD LOCKS space id 7 page no 5 n bits 504 index PRIMARY of table `shopdb`.`inventory` trx id 2146 lock_mode X locks rec but not gap waiting
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 6; compact format; info bits 0
+ 0: len 4; hex 00000001; asc     ;;
+ 1: len 6; hex 000000000861; asc      a;;
+ 2: len 7; hex 02000001570151; asc     W Q;;
+ 3: len 4; hex 7fffffff; asc     ;;
+ 4: len 4; hex 80000000; asc     ;;
+ 5: len 7; hex 99bb3003351824; asc   0 5 $;;
+
+------------------
+---TRANSACTION 2145, ACTIVE 5 sec
+2 lock struct(s), heap size 1128, 1 row lock(s), undo log entries 1
+会话 B 的结果：
+ERROR 1205 (HY000) at line 1: Lock wait timeout exceeded; try restarting transaction
+
+[1;36m========== 2. 无索引更新 → 锁全表（最容易被忽视的锁放大） ==========[0m
+表行数
+100000
+会话 A：UPDATE inventory_log ... WHERE biz_no='BIZ00000001'（biz_no 无索引）
+本次事务持有的锁数量
+100341
+*************************** 1. row ***************************
+  trx_rows_locked: 100340
+trx_rows_modified: 1
+
+[1;36m========== 3. 长事务：一条不提交的事务拖住 purge 与 DDL ==========[0m
+会话 A：BEGIN → 查一行（建 read view）→ 更新一行 → 挂起 30s（模拟事务里调用外部接口）
+*************************** 1. row ***************************
+           trx_id: 2152
+        trx_state: RUNNING
+            age_s: 2
+  trx_rows_locked: 1
+trx_rows_modified: 1
+                q: SELECT SLEEP(30)
+
+[1;33m--- History list length（undo 无法 purge 的直接证据） ---[0m
+Trx id counter 2153
+Purge done for trx's n:o < 2151 undo n:o < 0 state: running but idle
+History list length 26
+
+[1;33m--- 量化 purge 滞后：长事务期间持续提交写入，purge 线程被冻住 ---[0m
+t      trx_id_counter  purge_done  gap（gap=被拖住、无法清理 undo 的事务数）
+t+1s  2163 2159 4
+t+2s  2166 2159 7
+t+3s  2169 2159 10
+t+4s  2172 2159 13
+t+5s  2175 2159 16
+t+6s  2178 2159 19
+t+7s  2181 2159 22
+t+8s  2184 2159 25
+t+9s  2187 2159 28
+t+10s  2190 2159 31
+↑ gap 一路拉大：写入方明明都已提交，purge 却一步没走
+后果：purge 停摆期间 undo 持续累积（History list length 只涨不跌）、
+回滚段膨胀、磁盘空间不释放；表越大后果越重。生产上长事务是头号空间杀手。
+
+[1;33m--- 长事务阻塞 DDL（MDL），进而阻塞该表所有请求 ---[0m
+*************************** 1. row ***************************
+     id: 202
+   user: user1
+     db: shopdb
+command: Query
+   time: 18
+  state: User sleep
+   info: SELECT SLEEP(30)
+*************************** 2. row ***************************
+     id: 226
+   user: root
+     db: NULL
+command: Query
+   time: 5
+  state: Waiting for table metadata lock
+   info: ALTER TABLE shopdb.orders ADD COLUMN tmp_demo_col 
+*************************** 3. row ***************************
+     id: 227
+   user: user1
+     db: shopdb
+command: Query
+   time: 2
+  state: Waiting for table metadata lock
+   info: SELECT id FROM orders WHERE id=1
+*************************** 4. row ***************************
+     id: 228
+   user: root
+     db: NULL
+command: Query
+   time: 0
+  state: executing
+   info: SELECT id, user, db, command, time, state, LEFT(in
+
+[1;33m--- 对照：长事务提交后，purge 一口气追上来（gap 塌缩） ---[0m
+t+1s  2215 2206 9
+t+2s  2216 2215 1
+t+3s  2216 2215 1
+
+[1;36m========== 4. 死锁：两个事务交叉更新 ==========[0m
+两个会话的返回：
+ERROR 1213 (40001) at line 2: Deadlock found when trying to get lock; try restarting transaction
+
+[1;33m--- SHOW ENGINE INNODB STATUS → LATEST DETECTED DEADLOCK ---[0m
+LATEST DETECTED DEADLOCK
+------------------------
+2026-10-24 00:13:59 281472917880576
+*** (1) TRANSACTION:
+TRANSACTION 2224, ACTIVE 3 sec starting index read
+mysql tables in use 1, locked 1
+LOCK WAIT 3 lock struct(s), heap size 1128, 2 row lock(s), undo log entries 1
+MySQL thread id 234, OS thread handle 281472897625856, query id 765 192.168.215.1 user1 updating
+UPDATE inventory SET stock=stock+1 WHERE product_id=2
+
+*** (1) HOLDS THE LOCK(S):
+RECORD LOCKS space id 7 page no 5 n bits 504 index PRIMARY of table `shopdb`.`inventory` trx id 2224 lock_mode X locks rec but not gap
+Record lock, heap no 2 PHYSICAL RECORD: n_fields 6; compact format; info bits 0
+ 0: len 4; hex 00000001; asc     ;;
+ 1: len 6; hex 0000000008b0; asc       ;;
+ 2: len 7; hex 02000000890278; asc       x;;
+ 3: len 4; hex 80000000; asc     ;;
+ 4: len 4; hex 80000000; asc     ;;
+ 5: len 7; hex 99bb3003780438; asc   0 x 8;;
+
+
+*** (1) WAITING FOR THIS LOCK TO BE GRANTED:
+RECORD LOCKS space id 7 page no 5 n bits 504 index PRIMARY of table `shopdb`.`inventory` trx id 2224 lock_mode X locks rec but not gap waiting
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 6; compact format; info bits 0
+ 0: len 4; hex 00000002; asc     ;;
+ 1: len 6; hex 0000000008b2; asc       ;;
+ 2: len 7; hex 0200000121088c; asc     !  ;;
+ 3: len 4; hex 80000012; asc     ;;
+ 4: len 4; hex 80000000; asc     ;;
+ 5: len 7; hex 99bb30037817d4; asc   0 x  ;;
+
+
+*** (2) TRANSACTION:
+TRANSACTION 2226, ACTIVE 3 sec starting index read
+mysql tables in use 1, locked 1
+LOCK WAIT 3 lock struct(s), heap size 1128, 2 row lock(s), undo log entries 1
+MySQL thread id 235, OS thread handle 281472634707712, query id 766 192.168.215.1 user1 updating
+UPDATE inventory SET stock=stock+1 WHERE product_id=1
+
+*** (2) HOLDS THE LOCK(S):
+RECORD LOCKS space id 7 page no 5 n bits 504 index PRIMARY of table `shopdb`.`inventory` trx id 2226 lock_mode X locks rec but not gap
+Record lock, heap no 3 PHYSICAL RECORD: n_fields 6; compact format; info bits 0
+ 0: len 4; hex 00000002; asc     ;;
+ 1: len 6; hex 0000000008b2; asc       ;;
+ 2: len 7; hex 0200000121088c; asc     !  ;;
+
+[1;36m========== 5. 间隙锁：RR 隔离级别下范围条件锁住“不存在的行” ==========[0m
+promo_code 的 id：1000,1010,1020...（稀疏），1005 并不存在
+会话 A：SELECT ... WHERE id BETWEEN 1000 AND 1010 FOR UPDATE; 持锁 12s
+
+[1;33m--- 锁范围：LOCK_MODE=X 表示 next-key lock（记录锁 + 间隙锁） ---[0m
+*************************** 1. row ***************************
+        tbl: promo_code
+        idx: NULL
+  LOCK_MODE: IX
+LOCK_STATUS: GRANTED
+  LOCK_DATA: NULL
+*************************** 2. row ***************************
+        tbl: promo_code
+        idx: PRIMARY
+  LOCK_MODE: X
+LOCK_STATUS: GRANTED
+  LOCK_DATA: 1010
+*************************** 3. row ***************************
+        tbl: promo_code
+        idx: PRIMARY
+  LOCK_MODE: X,REC_NOT_GAP
+LOCK_STATUS: GRANTED
+  LOCK_DATA: 1000
+会话 B：插入 id=1005（落在间隙 (1000,1010) 里），被阻塞
+ERROR 1205 (HY000) at line 2: Lock wait timeout exceeded; try restarting transaction
+
+[1;36m========== 6. 治理要点与关键参数 ==========[0m
+Variable_name	Value
+innodb_deadlock_detect	ON
+innodb_lock_wait_timeout	10
+innodb_print_all_deadlocks	OFF
+innodb_rollback_on_timeout	OFF
+transaction_isolation	REPEATABLE-READ

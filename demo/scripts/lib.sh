@@ -34,6 +34,7 @@ reset_slowlog(){
 }
 
 # 当前 digest 排行榜（Top N 按总耗时）
+# 排除 information/performance_schema 的诊断查询与客户端连接探测，只看业务 SQL
 digest_top(){
   $ROOT -e "
     SELECT LEFT(DIGEST_TEXT, 70) AS sql_digest, COUNT_STAR AS 次数,
@@ -43,5 +44,8 @@ digest_top(){
            SUM_CREATED_TMP_DISK_TABLES AS 磁盘临时表
     FROM performance_schema.events_statements_summary_by_digest
     WHERE SCHEMA_NAME='shopdb'
+      AND DIGEST_TEXT NOT LIKE '%information%'
+      AND DIGEST_TEXT NOT LIKE '%performance%'
+      AND DIGEST_TEXT NOT LIKE '%version_comment%'
     ORDER BY SUM_TIMER_WAIT DESC LIMIT ${1:-5}\G" 2>/dev/null
 }

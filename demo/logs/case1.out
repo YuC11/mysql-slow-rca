@@ -1,0 +1,366 @@
+
+[1;36m========== 0. 清理上一次演示加的索引（保证可重复） ==========[0m
+
+[1;36m========== 1. 慢查询 #1：深分页 LIMIT 900000,20 ==========[0m
+执行 3 次 → 平均 0.4254 s/次 | 扫描行数 5700060 | 无索引访问 3 次 | 磁盘临时表 0
+
+[1;33m--- EXPLAIN ---[0m
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: orders
+   partitions: NULL
+         type: ALL
+possible_keys: NULL
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 995835
+     filtered: 100.00
+        Extra: Using filesort
+
+[1;33m--- EXPLAIN ANALYZE ---[0m
+*************************** 1. row ***************************
+EXPLAIN: -> Limit/Offset: 20/900000 row(s)  (cost=100810 rows=20) (actual time=550..550 rows=20 loops=1)
+    -> Sort: orders.created_at DESC, limit input to 900020 row(s) per chunk  (cost=100810 rows=995835) (actual time=462..523 rows=900020 loops=1)
+        -> Table scan on orders  (cost=100810 rows=995835) (actual time=0.0505..209 rows=1e+6 loops=1)
+
+
+[1;36m========== 2. 慢查询 #2：order_items.sku 无索引 ==========[0m
+执行 3 次 → 平均 0.4718 s/次 | 扫描行数 6000000 | 无索引访问 3 次 | 磁盘临时表 0
+
+[1;33m--- EXPLAIN ---[0m
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: order_items
+   partitions: NULL
+         type: ALL
+possible_keys: NULL
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 1991822
+     filtered: 10.00
+        Extra: Using where
+
+[1;33m--- Handler 统计（全表扫描的铁证） ---[0m
+cnt	amt
+400	373184.00
+Variable_name	Value
+Handler_read_first	1
+Handler_read_key	1
+Handler_read_last	0
+Handler_read_next	0
+Handler_read_prev	0
+Handler_read_rnd	0
+Handler_read_rnd_next	2000001
+
+[1;36m========== 3. 慢查询 #3：索引列上套函数 DATE(created_at) ==========[0m
+执行 3 次 → 平均 0.1243 s/次 | 扫描行数 3000000 | 无索引访问 0 次 | 磁盘临时表 0
+
+[1;33m--- EXPLAIN ---[0m
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: orders
+   partitions: NULL
+         type: index
+possible_keys: NULL
+          key: idx_created_at
+      key_len: 5
+          ref: NULL
+         rows: 995835
+     filtered: 100.00
+        Extra: Using where; Using index
+
+[1;36m========== 4. 慢查询 #4：左模糊 LIKE '%...' ==========[0m
+执行 3 次 → 平均 0.3105 s/次 | 扫描行数 3000000 | 无索引访问 3 次 | 磁盘临时表 0
+
+[1;33m--- EXPLAIN ---[0m
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: orders
+   partitions: NULL
+         type: ALL
+possible_keys: NULL
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 995835
+     filtered: 11.11
+        Extra: Using where
+
+[1;36m========== 5. 慢查询 #5：运营报表（JOIN + GROUP BY + 排序） ==========[0m
+执行 3 次 → 平均 0.7073 s/次 | 扫描行数 333366 | 无索引访问 0 次 | 磁盘临时表 3
+
+[1;33m--- EXPLAIN ---[0m
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: o
+   partitions: NULL
+         type: range
+possible_keys: idx_customer_created,idx_created_at
+          key: idx_created_at
+      key_len: 5
+          ref: NULL
+         rows: 115620
+     filtered: 100.00
+        Extra: Using index condition; Using temporary; Using filesort
+*************************** 2. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: c
+   partitions: NULL
+         type: eq_ref
+possible_keys: PRIMARY,idx_city
+          key: PRIMARY
+      key_len: 8
+          ref: shopdb.o.customer_id
+         rows: 1
+     filtered: 100.00
+        Extra: NULL
+
+[1;33m--- EXPLAIN ANALYZE ---[0m
+*************************** 1. row ***************************
+EXPLAIN: -> Sort: amt DESC  (actual time=342..342 rows=10 loops=1)
+    -> Table scan on <temporary>  (actual time=342..342 rows=10 loops=1)
+        -> Aggregate using temporary table  (actual time=342..342 rows=10 loops=1)
+            -> Nested loop inner join  (cost=92496 rows=115620) (actual time=0.55..265 rows=55556 loops=1)
+                -> Index range scan on o using idx_created_at over ('2024-06-01 00:00:00' <= created_at < '2024-07-01 00:00:00'), with index condition: ((o.created_at >= TIMESTAMP'2024-06-01 00:00:00') and (o.created_at < TIMESTAMP'2024-07-01 00:00:00'))  (cost=52029 rows=115620) (actual time=0.536..192 rows=55556 loops=1)
+                -> Single-row index lookup on c using PRIMARY (id=o.customer_id)  (cost=0.25 rows=1) (actual time=0.00113..0.00116 rows=1 loops=55556)
+
+
+[1;36m========== 6. 慢日志分析（log_slow_extra=ON） ==========[0m
+
+[1;33m--- 原始慢日志（节选最新 2 段） ---[0m
+SET timestamp=1792800749;
+SELECT id, order_no, total_amount FROM orders WHERE order_no LIKE '%0000012345';
+# Time: 2026-10-24T00:12:30.603463Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   135
+# Query_time: 0.297732  Lock_time: 0.000005 Rows_sent: 10  Rows_examined: 111122 Thread_id: 135 Errno: 0 Killed: 0 Bytes_received: 232 Bytes_sent: 394 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-24T00:12:30.305731Z End: 2026-10-24T00:12:30.603463Z
+SET timestamp=1792800750;
+SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+# Time: 2026-10-24T00:12:32.109660Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   136
+# Query_time: 1.486643  Lock_time: 0.000002 Rows_sent: 10  Rows_examined: 111122 Thread_id: 136 Errno: 0 Killed: 0 Bytes_received: 232 Bytes_sent: 394 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-24T00:12:30.623017Z End: 2026-10-24T00:12:32.109660Z
+SET timestamp=1792800750;
+SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+# Time: 2026-10-24T00:12:32.469536Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   137
+# Query_time: 0.337032  Lock_time: 0.000005 Rows_sent: 10  Rows_examined: 111122 Thread_id: 137 Errno: 0 Killed: 0 Bytes_received: 232 Bytes_sent: 394 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-24T00:12:32.132504Z End: 2026-10-24T00:12:32.469536Z
+SET timestamp=1792800752;
+SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+# Time: 2026-10-24T00:12:32.872236Z
+# User@Host: user1[user1] @  [192.168.215.1]  Id:   140
+# Query_time: 0.343311  Lock_time: 0.000003 Rows_sent: 1  Rows_examined: 111122 Thread_id: 140 Errno: 0 Killed: 0 Bytes_received: 248 Bytes_sent: 853 Read_first: 1 Read_last: 0 Read_key: 111115 Read_next: 55556 Read_prev: 0 Read_rnd: 0 Read_rnd_next: 22 Sort_merge_passes: 0 Sort_range_count: 0 Sort_rows: 10 Sort_scan_count: 1 Created_tmp_disk_tables: 1 Created_tmp_tables: 1 Start: 2026-10-24T00:12:32.528925Z End: 2026-10-24T00:12:32.872236Z
+SET timestamp=1792800752;
+EXPLAIN ANALYZE SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),2) amt
+    FROM orders o JOIN customers c ON c.id=o.customer_id
+    WHERE o.created_at >= '2024-06-01' AND o.created_at < '2024-07-01'
+    GROUP BY c.city ORDER BY amt DESC;
+
+[1;33m--- mysqldumpslow -s t（按总耗时排序） ---[0m
+Count: 3  Time=0.71s (2s)  Lock=0.00s (0s)  Rows=10.0 (30), user1[user1]@[192.168.215.1]
+  SELECT c.city, COUNT(*) cnt, ROUND(SUM(o.pay_amount),N) amt
+  FROM orders o JOIN customers c ON c.id=o.customer_id
+  WHERE o.created_at >= 'S' AND o.created_at < 'S'
+  GROUP BY c.city ORDER BY amt DESC
+
+Count: 4  Time=0.47s (1s)  Lock=0.00s (0s)  Rows=1.0 (4), 2users@[192.168.215.1]
+  SELECT COUNT(*) AS cnt, SUM(amount) AS amt FROM order_items WHERE sku='S'
+
+Count: 3  Time=0.43s (1s)  Lock=0.00s (0s)  Rows=20.0 (60), user1[user1]@[192.168.215.1]
+  SELECT id, order_no, customer_id, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT N, N
+
+Count: 3  Time=0.31s (0s)  Lock=0.00s (0s)  Rows=1.0 (3), user1[user1]@[192.168.215.1]
+  SELECT id, order_no, total_amount FROM orders WHERE order_no LIKE 'S'
+
+Count: 1  Time=0.55s (0s)  Lock=0.00s (0s)  Rows=1.0 (1), user1[user1]@[192.168.215.1]
+  EXPLAIN ANALYZE SELECT id, order_no, customer_id, total_amount, created_at FROM orders ORDER BY created_at DESC LIMIT N, N
+
+
+[1;33m--- performance_schema digest 排行榜 ---[0m
+*************************** 1. row ***************************
+     sql_digest: SELECT `c` . `city` , COUNT ( * ) `cnt` , `ROUND` ( SUM ( `o` . `pay_a
+         次数: 3
+     总耗时s: 2.122
+        平均s: 0.7073
+   扫描行数: 333366
+      无索引: 0
+磁盘临时表: 3
+*************************** 2. row ***************************
+     sql_digest: EXPLAIN ANALYZE SELECT `c` . `city` , COUNT ( * ) `cnt` , `ROUND` ( SU
+         次数: 1
+     总耗时s: 0.343
+        平均s: 0.3434
+   扫描行数: 111122
+      无索引: 0
+磁盘临时表: 1
+*************************** 3. row ***************************
+     sql_digest: EXPLAIN SELECT `c` . `city` , COUNT ( * ) `cnt` , `ROUND` ( SUM ( `o` 
+         次数: 1
+     总耗时s: 0
+        平均s: 0.0004
+   扫描行数: 0
+      无索引: 0
+磁盘临时表: 0
+
+[1;36m========== 7. 优化一：深分页改游标分页（Keyset Pagination） ==========[0m
+执行 3 次 → 平均 0.001 s/次 | 扫描行数 60 | 无索引访问 0 次 | 磁盘临时表 0
+*************************** 1. row ***************************
+EXPLAIN: -> Limit: 20 row(s)  (cost=97121 rows=20) (actual time=0.758..0.761 rows=20 loops=1)
+    -> Index range scan on orders using idx_created_at over (created_at < '2024-02-23 23:42:41') (reverse), with index condition: (orders.created_at < TIMESTAMP'2024-02-23 23:42:41')  (cost=97121 rows=215824) (actual time=0.757..0.759 rows=20 loops=1)
+
+
+[1;36m========== 8. 优化二：order_items.sku 加索引 ==========[0m
+执行 3 次 → 平均 0.0022 s/次 | 扫描行数 1200 | 无索引访问 0 次 | 磁盘临时表 0
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: order_items
+   partitions: NULL
+         type: ref
+possible_keys: idx_sku
+          key: idx_sku
+      key_len: 130
+          ref: const
+         rows: 400
+     filtered: 100.00
+        Extra: NULL
+
+[1;36m========== 9. 优化三：函数改写为范围查询 ==========[0m
+执行 3 次 → 平均 0.0006 s/次 | 扫描行数 5556 | 无索引访问 0 次 | 磁盘临时表 0
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: orders
+   partitions: NULL
+         type: range
+possible_keys: idx_customer_created,idx_created_at
+          key: idx_created_at
+      key_len: 5
+          ref: NULL
+         rows: 1852
+     filtered: 100.00
+        Extra: Using where; Using index
+
+[1;36m========== 10. 优化四：报表加覆盖索引 (created_at, customer_id, pay_amount) ==========[0m
+执行 3 次 → 平均 0.1333 s/次 | 扫描行数 333366 | 无索引访问 0 次 | 磁盘临时表 3
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: o
+   partitions: NULL
+         type: range
+possible_keys: idx_customer_created,idx_created_at,idx_created_cust_amount
+          key: idx_created_cust_amount
+      key_len: 5
+          ref: NULL
+         rows: 101098
+     filtered: 100.00
+        Extra: Using where; Using index; Using temporary; Using filesort
+*************************** 2. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: c
+   partitions: NULL
+         type: eq_ref
+possible_keys: PRIMARY,idx_city
+          key: PRIMARY
+      key_len: 8
+          ref: shopdb.o.customer_id
+         rows: 1
+     filtered: 100.00
+        Extra: NULL
+
+[1;36m========== 11. 慢查询 #6：隐式类型转换——varchar 列 = 数字，索引直接失效 ==========[0m
+
+[1;33m--- 正确写法：字符串常量 ---[0m
+执行 3 次 → 平均 0.0003 s/次 | 扫描行数 3 | 无索引访问 0 次 | 磁盘临时表 0
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: orders
+   partitions: NULL
+         type: const
+possible_keys: uk_order_no
+          key: uk_order_no
+      key_len: 130
+          ref: const
+         rows: 1
+     filtered: 100.00
+        Extra: NULL
+
+[1;33m--- 错误写法：order_no = 1234（数字），全表扫描 100 万行 ---[0m
+执行 3 次 → 平均 0.3442 s/次 | 扫描行数 3000000 | 无索引访问 3 次 | 磁盘临时表 0
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: orders
+   partitions: NULL
+         type: ALL
+possible_keys: uk_order_no
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 995835
+     filtered: 10.00
+        Extra: Using where
+
+[1;33m--- SHOW WARNINGS：优化器亲口告诉你为什么放弃索引 ---[0m
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	orders	NULL	ALL	uk_order_no	NULL	NULL	NULL	995835	10.00	Using where
+Level	Code	Message
+Warning	1739	Cannot use ref access on index 'uk_order_no' due to type or collation conversion on field 'order_no'
+Warning	1739	Cannot use range access on index 'uk_order_no' due to type or collation conversion on field 'order_no'
+Note	1003	/* select#1 */ select `shopdb`.`orders`.`id` AS `id`,`shopdb`.`orders`.`order_no` AS `order_no`,`shopdb`.`orders`.`total_amount` AS `total_amount` from `shopdb`.`orders` where (`shopdb`.`orders`.`order_no` = 1234)
+更隐蔽的是正确性：'SO000001234' 转数字=0，这条查询一行都查不到——不但慢，还悄悄查错了
+
+[1;36m========== 12. 慢查询 #7：统计信息过期——优化器拿着旧地图走路 ==========[0m
+建专用表 demo_stats（STATS_AUTO_RECALC=0，统计信息只在显式 ANALYZE 时更新）
+阶段一：插 200 行并 ANALYZE，字典统计记下 200 行
+
+[1;33m--- ① 字典统计（mysql.innodb_table_stats）：n_rows=200 ---[0m
+database_name	table_name	last_update	n_rows	clustered_index_size	sum_of_other_index_sizes
+shopdb	demo_stats	2026-10-24 00:12:46	200	1	1
+阶段二：再灌 50 万行，不做 ANALYZE（模拟'大变更后没人更新统计'）
+
+[1;33m--- ② 字典统计还停在 200 —— 统计确实过期了 ---[0m
+过期的n_rows	note
+200	实际行数 ↓
+实际行数
+500200
+
+[1;33m--- ③ 但 EXPLAIN 的 rows 居然是准的——8.0 连全扫估算都会下潜 B+ 树实时数 ---[0m
+  select_type: SIMPLE
+         type: ALL
+          key: NULL
+         rows: 500200
+        Extra: NULL
+
+[1;33m--- ④ 那过期的字典统计到底喂给谁？——JOIN 的基数估算 ---[0m
+index_name	stat_name	ndv	平均每值行数
+PRIMARY	n_diff_pfx01	200	1.0
+idx_status	n_diff_pfx01	1	200.0
+idx_status	n_diff_pfx02	200	1.0
+   说明：等值/范围条件有 index dive 实时兜底，所以单表查询大多不会因统计过期翻车；
+   但 JOIN 没有具体值可下探，只能用上面的 n_diff（平均每值多少行）估算内表探测成本——
+   字典统计过期时，JOIN 顺序与 NLJ/Hash 的选择就建立在旧数据上。
+   生产上'大变更之后 JOIN 突然变慢、ANALYZE 一下就好'，根因就在这里。
+阶段三：ANALYZE TABLE 把地图更新回来
+
+[1;33m--- ⑤ 字典统计恢复准确 ---[0m
+n_rows
+499590

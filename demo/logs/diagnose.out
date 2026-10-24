@@ -1,0 +1,36 @@
+
+[1;36m========== 0. 实例信息 ==========[0m
+（容器核数：2，判定阈值随核数联动）
+
+[1;36m========== 1. 五个黄金信号（阈值见手册 §2.3 / §2.6） ==========[0m
+[PASS] Threads_running=3（阈值 ≤ 核数2×2=4）
+[PASS] Threads_connected=2 / 上限50（4%）
+[INFO] Slow_queries=28（累计，≈5.2 次/分钟；累计值不能单独判定，以 digest 排行为准）
+[PASS] 行锁等待中 Innodb_row_lock_current_waits=0（历史累计 Innodb_row_lock_waits=0）
+[PASS] buffer pool 命中率 99.979%（≥ 99%；累计口径，重启后前期偏低属正常）
+[INFO] Created_tmp_disk_tables=14（累计；>0 说明发生过排序/聚合落盘，结合 digest 看是哪条 SQL）
+
+[1;36m========== 2. 连接都去哪了（按 用户/来源/状态 聚合） ==========[0m
+user	ip	command	state	conns
+repl	192.168.215.1	Binlog Dump GTID	Source has sent all binlog to replica; waiting for more updates	1
+root	192.168.215.1	Query	executing	1
+
+[1;36m========== 3. 慢 SQL 排行（digest 按总耗时 Top10，标注无索引/磁盘临时表） ==========[0m
+[PASS] digest Top10 均无无索引访问、无磁盘临时表
+
+[1;36m========== 4. 长事务（>60s 必须处置） ==========[0m
+[PASS] 无超过 10s 的事务
+
+[1;36m========== 5. 锁等待关系（sys.innodb_lock_waits） ==========[0m
+[PASS] 当前无锁等待链
+
+[1;36m========== 6. 复制状态（优先探测本环境从库 13307，其次本机 REPLICA 配置） ==========[0m
+（未配置复制，跳过）
+
+[1;36m========== 7. 容器资源（对照案例四） ==========[0m
+CPU=3.12%  内存=668.5MiB / 1GiB
+
+[1;36m========== 8. 诊断结论（按手册 §2.4 决策树归类） ==========[0m
+未命中任何异常信号，数据库侧暂时健康。
+若业务仍反馈"慢"：回到手册 §2.2 做应用侧分段（连接池等待 / 网络 / DB 执行 / 结果集传输），
+不要在数据库上继续找。

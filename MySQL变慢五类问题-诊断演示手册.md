@@ -186,14 +186,38 @@ FROM (SELECT VARIABLE_VALUE+0 v FROM performance_schema.global_status WHERE VARI
      (SELECT VARIABLE_VALUE+0 v FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_read_requests') q;
 ```
 
-实跑输出：
+实跑输出（新版含 `判定` 列，阈值来自 §2.3/§2.6）：
 
 ```
-指标      值
-连接      Threads_running=2 / Threads_connected=1
-慢查询     Slow_queries=519
-锁等待     Innodb_row_lock_waits=0
-命中率     99.961%
+指标               值                                            判定
+连接数             Threads_running=2 / Threads_connected=1 / 上限=50   PASS
+慢查询             Slow_queries=5                                INFO 累计值，以digest排行为准
+行锁等待           Innodb_row_lock_waits=0 / current=0           PASS（历史累计见值）
+buffer pool 命中率  99.928%                                       PASS 累计口径
+磁盘临时表          Created_tmp_disk_tables=4                     WARN 发生过落盘，看digest定位SQL
+```
+
+把这套判定再往前推一步，就是两个配套脚本：
+
+```bash
+# 自动分流诊断：采集五个黄金信号+连接分布+digest+长事务+锁等待+复制状态，
+# 逐项 PASS/WARN/FAIL，末尾按 §2.4 决策树自动归类"优先排查案例X（证据：…）"
+bash demo/scripts/diagnose.sh > demo/logs/diagnose.out 2>&1
+
+# 基线快照：支撑"看趋势，不看瞬时值"——save 存快照，diff 出区间增量与每分钟速率
+bash demo/scripts/baseline.sh save before
+# ... 处置之后 ...
+bash demo/scripts/baseline.sh diff before
+```
+
+diagnose.sh 的结论区长这样（锁竞争演示进行中实跑）：
+
+```
+命中 4 项异常信号，优先排查顺序如下（先看链条源头，再看最显眼的症状）：
+  → 案例二  证据：Innodb_row_lock_current_waits=1
+  → 案例四  证据：buffer pool 命中率 98.331% < 99%
+  → 案例一  证据：digest 中 1 条 SQL 无索引访问/磁盘临时表
+  → 案例二  证据：sys.innodb_lock_waits 有 1 组等待（同上，多一处的佐证）
 ```
 
 再配一条"谁在跑"的按维度聚合（比 `SHOW PROCESSLIST` 好用得多）：
@@ -640,6 +664,55 @@ Created_tmp_disk_tables: 1 ← 但用了磁盘临时表
 
 **根因**：扫描只用了 241ms，剩下 150ms 全在"临时表聚合 + 排序"。`GROUP BY c.city` 的 `city` 来自被驱动表，无法利用 `orders` 的索引顺序。
 
+#### ⑥ 隐式类型转换：`varchar 列 = 数字`
+
+```sql
+-- 正确：字符串常量
+SELECT id, order_no, total_amount FROM orders WHERE order_no = 'SO0000001234';
+-- 错误：数字常量
+SELECT id, order_no, total_amount FROM orders WHERE order_no = 1234;
+```
+
+实测对比（case1.out §11）：
+
+```
+正确：type: const  key: uk_order_no  rows: 1      → 0.0003 s/次
+错误：type: ALL    key: NULL         rows: 995835 → 0.3442 s/次，扫 100 万行
+```
+
+差 **1100 倍**。原因：字符串列与数字比较时，MySQL 把**列**转成数字（而不是把常量转成字符串），`order_no` 上的索引彻底用不上。`SHOW WARNINGS` 里优化器说得明明白白：
+
+```
+Warning 1739: Cannot use ref access on index 'uk_order_no' due to type or
+              collation conversion on field 'order_no'
+```
+
+更隐蔽的是**正确性**：`'SO0000001234'` 转数字 = 0，这条查询一行都查不到——不但慢，还悄悄查错了。定位口诀：**EXPLAIN 里 `possible_keys` 有、`key` 为 NULL 时，先跑一次 `EXPLAIN; SHOW WARNINGS;`**。
+
+#### ⑦ 统计信息过期：优化器拿着旧地图走路
+
+场景：批量导入/归档之后没人执行 `ANALYZE TABLE`，字典统计停留在旧值。实测（case1.out §12，专用表 `STATS_AUTO_RECALC=0`）：
+
+```
+阶段一：插 200 行 + ANALYZE        → mysql.innodb_table_stats.n_rows = 200
+阶段二：再灌 50 万行，不 ANALYZE   → n_rows 仍 = 200（统计确实过期了）
+                                    实际行数 500200
+```
+
+但接下来有个反直觉的发现——**EXPLAIN 的 rows 居然是准的**：
+
+```
+EXPLAIN SELECT * FROM demo_stats          → rows: 500200   ← 不是 200！
+```
+
+因为 8.0 对等值/范围条件（甚至全扫估算）会做 **index dive**：优化器现场潜入 B+ 树数一遍，不依赖字典统计。那过期的统计到底喂给谁？——**JOIN 的基数估算**：JOIN 没有具体值可下探，只能用 `innodb_index_stats` 里的 `n_diff`（平均每值多少行）来估算内表探测成本。字典统计过期时，JOIN 顺序与 NLJ/Hash 的选择就建立在旧数据上。
+
+生产上"大变更之后 JOIN 突然变慢、`ANALYZE TABLE` 一下就好"，根因就在这里。治理：
+
+- 大批量导入/归档后**必须 `ANALYZE TABLE`**（或建表时就设 `STATS_AUTO_RECALC=1`）；
+- 数据倾斜严重的列加**直方图**（`ANALYZE TABLE t UPDATE HISTOGRAM ON col`），让 `filtered` 估算有据可依；
+- 排查时直接查证据：`SELECT * FROM mysql.innodb_table_stats WHERE table_name='t';`
+
 ### 4.5 慢日志与 digest 联动
 
 慢日志（阈值 0.2s）里能直接看到这条报表 SQL 的完整画像（冷缓存时的一次采样，热缓存约 0.54s）：
@@ -678,6 +751,8 @@ sql_digest: SELECT `c` . `city` , COUNT ( * ) `cnt` , ...
 | `DATE()` | 0.0921 s / 100 万行 | 改写为范围查询 | 0.0005 s / 1852 行 | ~180× |
 | 左模糊 | 0.2339 s / 100 万行 | 无法索引，改设计 | — | 需换方案 |
 | 报表 | 0.5377 s / 磁盘临时表 | 覆盖索引 `(created_at, customer_id, pay_amount)` | 0.0951 s / 索引覆盖 | ~5.6× |
+| 隐式转换 | 0.3442 s / 100 万行 | 常量写成字符串（§4.4⑥） | 0.0003 s / 1 行 | ~1100× |
+| 统计过期 | JOIN 成本误估 | `ANALYZE TABLE` / 直方图（§4.4⑦） | 估算恢复准确 | 预防性 |
 
 #### 优化后的执行计划对比
 
@@ -884,7 +959,29 @@ SELECT trx_rows_locked FROM information_schema.innodb_trx;  -- 100340
 
 > 生产经验：**所有 `UPDATE/DELETE` 的 `WHERE` 条件列都必须有索引**，这不是性能优化，是正确性要求。
 
-#### 场景 C：长事务阻塞 DDL（MDL），进而雪崩
+#### 场景 C：长事务——先拖住 purge，再阻塞 DDL
+
+长事务的第一重危害是 **purge 停摆**。演示（case2.out §3，长事务持 read view 期间，写入方每秒提交一次 UPDATE）：
+
+```
+t      trx_id_counter  purge_done  gap（gap=被拖住、无法清理 undo 的事务数）
+t+1s  2163  2159   4
+t+5s  2175  2159  16
+t+10s 2190  2159  31      ← 写入方明明都已提交，purge 却一步没走
+```
+
+长事务提交后，purge 一口气追上来：
+
+```
+t+1s  2215 2206  9
+t+2s  2216 2215  1       ← gap 塌缩
+```
+
+后果：purge 停摆期间 undo 持续累积（History list length 只涨不跌）、回滚段膨胀、磁盘空间不释放——**长事务是生产上的头号空间杀手**。
+
+一个实测才看得到的细节：**必须先做过一致性读（SELECT）的事务才真正挡住 purge**。只做 UPDATE 不 SELECT 的事务没有 read view，其他已提交事务的 undo 照样能被清理。所以"事务里先 SELECT 再干活"的写法，锁窗口和 purge 影响都比纯写事务更重。
+
+长事务的第二重危害才是 **MDL 雪崩**：
 
 ```sql
 -- 会话 A：开事务查一行，不提交
@@ -1324,7 +1421,26 @@ SELECT * FROM orders LIMIT 300000;   -- 约 25MB 结果集
 
 处置：只查需要的列、分页、大字段拆表、压缩传输、就近部署只读副本。
 
-### 7.7 资源类问题的排查顺序
+### 7.7 buffer pool 预热：重启后为什么前几分钟慢
+
+`docker restart` 之后 buffer pool 清空，前几次查询全是物理读。实测（case4.out §6，重启后连跑同一条报表 SQL）：
+
+```
+重启前（热）：0.1437 s
+冷启动第 1 遍：0.1404 s   命中率 98.71%
+冷启动第 2 遍：0.1280 s   命中率 99.31%
+冷启动第 3 遍：0.1294 s   命中率 99.53%
+冷启动第 4 遍：0.1272 s   命中率 99.65%   ← 热点页被逐批载入，逼近热态
+```
+
+两点解读：
+
+- **命中率的单调爬升就是预热机制的直接证据**。这是"重启后短时间慢、会自愈"的原理，也是云数据库"预热/内存保障"功能的卖点。
+- 本例耗时差异偏小（140ms→127ms），是因为 **macOS 宿主机的文件缓存把物理读也兜住了**——冷读命中的是 host page cache 而不是真磁盘。生产云盘上冷热差会大得多。判断"内存不足 vs 正常预热"：预热几分钟内自愈 → 正常；长时间命中率上不去（对照 §2.5）→ buffer pool 确实不够（回到 §7.3）。
+
+故障切换/重启后的正确姿势：切流量前先跑一遍热点查询预热（云厂商称为"预热窗口"），或接受前几分钟的 RT 抖动并把它从告警里摘出来。
+
+### 7.8 资源类问题的排查顺序
 
 ```
 1. 看 CPU：docker stats / top / mpstat
@@ -1357,13 +1473,14 @@ innodb_flush_method            fsync
 innodb_io_capacity             200
 innodb_log_buffer_size         16777216
 max_connections                50
-open_files_limit               20480
-sync_binlog                    1
 table_open_cache               2000
+sync_binlog                    1
 tmp_table_size                 2097152       (2M)
 sort_buffer_size               1048576
 join_buffer_size               262144
 ```
+
+> 注：`open_files_limit` 这类参数 mysqld 启动时会按 `max_connections`、`table_open_cache` 自动上调，实际生效值可能大于 my.cnf 里的设定；要看真实值用 `SHOW VARIABLES`，不要拿配置文件对照。
 
 #### 实测：双 1 刷盘的代价
 
@@ -1406,6 +1523,29 @@ max_connections     50
 | 写入周期性卡顿 | redo/checkpoint 抖动、`innodb_io_capacity` 太低 |
 | 大查询把实例拖垮 | `tmp_table_size`/`sort_buffer_size` 配置不当 + 无并发限制 |
 | 连接数总是不够 | `max_connections` 与池大小不匹配 |
+| **删了一半数据，查询没变快、磁盘没释放** | **表膨胀/碎片，见下** |
+
+#### 表膨胀与碎片：删了数据为什么没变快
+
+实测（case5.out §3，专用表 10 万行、每行约 200 字节）：
+
+```
+                    行数     .ibd 物理文件
+① 插入 10 万行      100000    32M
+② DELETE 80%         20000    32M   ← 行数掉到 1/5，文件一分不小
+③ OPTIMIZE TABLE     20000    11M   ← 重建表，空间还给操作系统
+```
+
+**根因**：InnoDB 的 DELETE 只把行标记为删除、页放入空闲链表，**从不把空间还给操作系统**。后果有三层：磁盘占用不降；buffer pool 里装着大量半空的页（有效密度低）；全表扫描仍要走过带空洞的页。监控口径：`information_schema.tables` 的 `DATA_FREE` 与实际行数/数据量的比值，以及 `.ibd` 文件物理大小。
+
+处置与代价：
+
+| 手段 | 说明 | 代价 |
+|---|---|---|
+| `OPTIMIZE TABLE`（= `ALTER ... ENGINE=InnoDB`） | 重建表，空间回收 | 8.0 支持在线重建但 DML 受限，大表期间主从延迟 |
+| `gh-ost` / `pt-online-schema-change` | 线上大表标准做法 | 需要额外磁盘与双写开销 |
+| 分区表 + `DROP PARTITION` | 按时间归档场景的最优解 | 需要提前按归档键分区 |
+| **避免起膨胀** | 大删除改分批 + 及时归档 | 治本 |
 
 ### 8.2 架构：读写分离的延迟陷阱
 
@@ -1470,6 +1610,20 @@ Worker 1 failed executing transaction '...:462' ... Error executing row event:
 原因：`replicate-do-db=repltest` 是按**默认库**过滤的。`CREATE DATABASE repltest` 执行时默认库是 NULL，被过滤掉了；`CREATE TABLE repltest.big_order` 同理。从库既没有库也没有表，回放 row 事件必然失败。
 
 **结论**：用 `replicate-do-db` 时，从库要预先建好库；主库的 DDL 必须 `USE db` 后再执行，或者改用 `replicate-wild-do-table`。
+
+#### 第二个坑：`gtid_purged` 会把位点之前的建表 DDL 一起跳过
+
+复现本次演示脚本重跑时踩到（报错同样在从库）：
+
+```
+Last_SQL_Errno: 1146
+Worker 1 failed executing transaction '...:904' ... Error executing row event:
+'table repltest.big_order doesn't exist'
+```
+
+链路：`SET GLOBAL gtid_purged='<主库位点>'` 的语义是"这些事务从库已经应用过了"——**位点之前的所有事务（包括建表 DDL）都会被跳过**。从库上库是手工建的、表却从未存在，回放第一个 INSERT 就报 1146。
+
+**结论**：手工对齐位点时，从库不仅要**预建库，还要预建表**（schema 与主库对齐）；或者把位点选在 DDL 之前、让建表语句自然回放。这也解释了为什么克隆快照（clone plugin / 物理备份）比手工 GTID 对齐可靠得多。
 
 #### 关键字段怎么读
 
@@ -1585,16 +1739,20 @@ replica_preserve_commit_order ON
 | 脚本 | 作用 | 运行命令 |
 |---|---|---|
 | `00-up.sh` | 启动容器、建表、造数 | `bash demo/scripts/00-up.sh` |
-| `lib.sh` | 公共函数（计时、慢日志重置、digest 排行） | 被其他脚本 source |
-| `10-case1-slow-sql.sh` | 案例一：5 条慢 SQL + 优化对比 | `bash demo/scripts/10-case1-slow-sql.sh > demo/logs/case1.out 2>&1` |
-| `20-case2-lock.sh` | 案例二：行锁/锁全表/长事务/死锁/间隙锁 | `bash demo/scripts/20-case2-lock.sh > demo/logs/case2.out 2>&1` |
+| `lib.sh` | 公共函数（计时、慢日志重置、digest 排行）；凭据走 `.my-*.cnf`（600 权限） | 被其他脚本 source |
+| `10-case1-slow-sql.sh` | 案例一：7 条慢 SQL + 优化对比（含隐式转换、统计过期） | `bash demo/scripts/10-case1-slow-sql.sh > demo/logs/case1.out 2>&1` |
+| `20-case2-lock.sh` | 案例二：行锁/锁全表/长事务+purge 量化/MDL/死锁/间隙锁 | `bash demo/scripts/20-case2-lock.sh > demo/logs/case2.out 2>&1` |
 | `30-case3-connections.sh` | 案例三：线程打满 + 连接打满 | `bash demo/scripts/30-case3-connections.sh > demo/logs/case3.out 2>&1` |
-| `40-case4-resources.sh` | 案例四：CPU/内存/IO/临时表/网络 | `bash demo/scripts/40-case4-resources.sh > demo/logs/case4.out 2>&1` |
-| `50-case5-config-repl.sh` | 案例五：配置实测 + 主从复制 | `bash demo/scripts/50-case5-config-repl.sh > demo/logs/case5.out 2>&1` |
-| `99-health-check.sql` | 一键巡检 | `mysql -h127.0.0.1 -P13306 -uroot -proot123 < demo/sql/99-health-check.sql > demo/logs/health.out 2>&1` |
+| `40-case4-resources.sh` | 案例四：CPU/内存/IO/临时表/网络/重启预热 | `bash demo/scripts/40-case4-resources.sh > demo/logs/case4.out 2>&1` |
+| `50-case5-config-repl.sh` | 案例五：配置实测 + 表膨胀碎片 + 主从复制 | `bash demo/scripts/50-case5-config-repl.sh > demo/logs/case5.out 2>&1` |
+| `diagnose.sh` | 自动分流诊断：信号采集→阈值判定→决策树归类 | `bash demo/scripts/diagnose.sh > demo/logs/diagnose.out 2>&1` |
+| `baseline.sh` | 基线快照与趋势对比 | `bash demo/scripts/baseline.sh save <tag>` / `diff <t1> [t2]` / `list` |
+| `99-down.sh` | 结束清理：轻量清演示残留（默认）/ `--all` 彻底回收 | `bash demo/scripts/99-down.sh` 或 `bash demo/scripts/99-down.sh --all` |
+| `99-health-check.sql` | 一键巡检（含判定列） | `mysql ... < demo/sql/99-health-check.sql > demo/logs/health.out 2>&1` |
 | `01-schema.sql` / `02-seed.sql` | 表结构与造数 | 由 `00-up.sh` 自动执行 |
 
 > 脚本只往标准输出打印，**不会自己创建 `.out` 文件**；上面的 `>` 由你决定写到哪，同名文件会被覆盖。
+> 演示结束后跑 `99-down.sh` 回收脏数据（演示表/索引/复制通道/被改动的业务行/慢日志），`--all` 连容器与数据卷一起删。
 
 ### 9.4 排障 Checklist（可直接贴到工单）
 
