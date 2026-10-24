@@ -7,6 +7,8 @@
 ```bash
 # 1. 拉起演示库（Docker，2核1G，MySQL 8.0）
 bash demo/scripts/00-up.sh
+#   追加自定义 mysqld 参数（命令行级，优先级高于 conf/my.cnf；改参数需 RESET=1 重建）：
+#   MYSQL_ARGS="--max_connections=100 --innodb_buffer_pool_size=256M" bash demo/scripts/00-up.sh
 
 # 2. 逐个案例跑（每个脚本都会打印定位命令的真实输出）
 bash demo/scripts/10-case1-slow-sql.sh  > demo/logs/case1.out 2>&1
